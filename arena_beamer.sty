@@ -1,11 +1,23 @@
 % arena_beamer.sty - shared preamble for all ARENA talk decks.
-% Claude Opus 4.7
-% Each deck does:
-%   \documentclass[10pt,a4paper]{beamer}     % (add `handout` for handout mode)
-%   \usepackage{arena_beamer}
+%
+% Loaded BEFORE \documentclass (via plain \input, not \usepackage) so that
+% it can decide whether to pass `handout` to beamer based on the \HANDOUT
+% toggle. The deck pattern is:
+%
+%   \providecommand{\HANDOUT}{1}              % 1 = handout, 0 = presentation
+%   \input{../../arena_beamer.sty}
+%   ... deck-local macros ...
 %   \begin{document} ... \end{document}
-\NeedsTeXFormat{LaTeX2e}
-\ProvidesPackage{arena_beamer}[2026/05/26 ARENA shared beamer preamble]
+%
+% CI overrides the deck's local toggle via latexmk's -usepretex flag, which
+% \def's \HANDOUT before main.tex starts. The \providecommand below is a
+% safety default if neither the deck nor CI set anything.
+
+\providecommand{\HANDOUT}{1}
+\ifnum\HANDOUT=1
+  \PassOptionsToClass{handout}{beamer}
+\fi
+\documentclass[10pt,a4paper]{beamer}
 
 \RequirePackage[latin1]{inputenc}
 \RequirePackage{amsmath}
@@ -42,7 +54,9 @@
 
 \usetikzlibrary{calc, fadings, decorations.pathreplacing, automata, positioning, arrows, shapes.geometric, arrows.meta, positioning, fit, backgrounds}
 
-\newcommand{\R}{\mathbb{R}}
+% Generic math/style macros used across decks.
+% Anything chapter-specific (state space, reward set, etc.) lives in the
+% deck's own main.tex, not here.
 \newcommand{\Ex}{\mathbb{E}}
 \newcommand{\red}[1]{\textcolor{red}{#1}}
 \newcommand{\bth}{{\boldsymbol{\theta}}}

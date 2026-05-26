@@ -75,22 +75,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Compile LaTeX
+      # Each deck is built twice: once in presentation mode (with \pause
+      # reveals) and once in handout mode (collapsed). The arena_beamer.sty
+      # reads \HANDOUT; latexmk's -usepretex injects that def before main.tex
+      # runs, overriding whatever the deck file says.
+
+      - name: Build presentation mode (\pause reveals on)
         uses: xu-cheng/latex-action@v3
         with:
           working_directory: ${{ matrix.deck }}
           root_file: main.tex
-          # Each deck's main.tex does `\input{../../arena_beamer.sty}` so no
-          # TEXINPUTS or latexmk-config magic is needed.
+          args: '-pdf -file-line-error -halt-on-error -interaction=nonstopmode -usepretex=\def\HANDOUT{0}'
 
-      - name: Rename PDF
+      - name: Stash presentation PDF
+        run: mv "${{ matrix.deck }}/main.pdf" "${{ matrix.deck }}/${{ matrix.slug }}-present.pdf"
+
+      - name: Clean intermediate build files
+        run: |
+          cd "${{ matrix.deck }}"
+          rm -f main.aux main.log main.nav main.out main.snm main.toc main.vrb main.fls main.fdb_latexmk
+
+      - name: Build handout mode (\pause reveals collapsed)
+        uses: xu-cheng/latex-action@v3
+        with:
+          working_directory: ${{ matrix.deck }}
+          root_file: main.tex
+          args: '-pdf -file-line-error -halt-on-error -interaction=nonstopmode -usepretex=\def\HANDOUT{1}'
+
+      - name: Rename handout PDF
         run: mv "${{ matrix.deck }}/main.pdf" "${{ matrix.deck }}/${{ matrix.slug }}.pdf"
 
-      - name: Upload PDF artifact
+      - name: Upload PDF artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.slug }}
-          path: ${{ matrix.deck }}/${{ matrix.slug }}.pdf
+          path: |
+            ${{ matrix.deck }}/${{ matrix.slug }}.pdf
+            ${{ matrix.deck }}/${{ matrix.slug }}-present.pdf
 
   release:
     # Rolling 'latest' release: every push to main replaces the single
@@ -130,7 +151,17 @@ jobs:
                 [[ "$chap_dir" =~ ^chapter([0-9]+)_(.*)$ ]] || continue
                 chap_num="${BASH_REMATCH[1]}"
                 chap_rest="${BASH_REMATCH[2]}"
-                chap_pretty=$(echo "$chap_rest" | awk -F_ '{for(i=1;i<=NF;i++)$i=toupper(substr($i,1,1)) substr($i,2);}1' OFS=' ')
+
+                # Hardcoded chapter display names. Add a row when a new
+                # chapter dir lands. Unknown chapters fall back to a
+                # title-cased version of the dir suffix.
+                case "$chap_dir" in
+                    chapter0_fundamentals)        chap_pretty="Fundamentals" ;;
+                    chapter1_transformer_interp)  chap_pretty="Transformer Interpretability" ;;
+                    chapter2_rl)                  chap_pretty="Reinforcement Learning" ;;
+                    chapter3_llm_evals)           chap_pretty="LLM Evals" ;;
+                    *) chap_pretty=$(echo "$chap_rest" | awk -F_ '{for(i=1;i<=NF;i++)$i=toupper(substr($i,1,1)) substr($i,2);}1' OFS=' ') ;;
+                esac
 
                 if [[ "$part_dir" =~ ^part([0-9]+)_([0-9]+)_(.*)$ ]]; then
                     part_num="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"; topic="${BASH_REMATCH[3]}"
@@ -155,7 +186,7 @@ jobs:
                     echo "## ${chap_heading}"
                     current_chap="$chap_heading"
                 fi
-                echo "- **${chap_num}.${part_num}** ${talk_title} · [Download](https://github.com/${REPO}/releases/latest/download/${slug}.pdf)"
+                echo "- **${chap_num}.${part_num}** ${talk_title} · [📄 Handout](https://github.com/${REPO}/releases/latest/download/${slug}.pdf) · [🎬 Present](https://github.com/${REPO}/releases/latest/download/${slug}-present.pdf)"
             done < <(find . -path './chapter*/part*/main.tex' | sort)
           } > release-body.md
           echo "----- release-body.md -----"

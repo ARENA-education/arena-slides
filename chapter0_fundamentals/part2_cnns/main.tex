@@ -1,6 +1,19 @@
-% to turn into handout mode, add `handout` to the documentclass options
-\documentclass[10pt,a4paper,handout]{beamer}
+% !TEX root = ./main.tex
+% ^ Tells LaTeX Workshop (Cursor/VSCode) to treat this file as the build root.
+% Needed because \documentclass lives in arena_beamer.sty (\input'ed below)
+% rather than in this file, and the extension's root-file detector greps for
+% \documentclass without following \input -- so without this line it reports
+% "No root file found" and silently aborts Ctrl+Alt+B. CLI builds are
+% unaffected; latexmk/pdflatex follow \input fine.
+% Local-dev build-mode toggle. 1 = handout (all \pause overlays collapsed,
+% small PDF), 0 = presentation (each \pause becomes an extra page, for
+% live talks). CI overrides this via latexmk -usepretex regardless of what
+% it's set to here, so this line only affects local pdflatex/latexmk runs.
+\providecommand{\HANDOUT}{1}
 \input{../../arena_beamer.sty}
+
+% Deck-local macros.
+\newcommand{\R}{\mathbb{R}}
 
 \begin{document}
 
