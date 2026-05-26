@@ -1,0 +1,86 @@
+% arena_beamer.sty - shared preamble for all ARENA talk decks.
+% Claude Opus 4.7
+% Each deck does:
+%   \documentclass[10pt,a4paper]{beamer}     % (add `handout` for handout mode)
+%   \usepackage{arena_beamer}
+%   \begin{document} ... \end{document}
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{arena_beamer}[2026/05/26 ARENA shared beamer preamble]
+
+\RequirePackage[latin1]{inputenc}
+\RequirePackage{amsmath}
+\RequirePackage{amsfonts}
+\RequirePackage{amssymb}
+\RequirePackage{graphicx}
+\RequirePackage{ulem}
+\RequirePackage{algorithm2e}
+\RequirePackage{algpseudocode}
+\RequirePackage{diffcoeff}
+\RequirePackage{xcolor}
+\RequirePackage{tikz}
+\RequirePackage{cancel}
+\RequirePackage{pgfplots}
+\RequirePackage{background}
+\RequirePackage{stmaryrd}
+\RequirePackage{subcaption}
+\RequirePackage{ifthen}
+\RequirePackage{listings}
+\RequirePackage{hyperref}
+
+\usetheme{Madrid}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=white,
+    filecolor=magenta,
+    urlcolor=cyan,
+}
+\urlstyle{same}
+
+\DeclareMathOperator*{\argmin}{\arg\!\min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+
+\usetikzlibrary{calc, fadings, decorations.pathreplacing, automata, positioning, arrows, shapes.geometric, arrows.meta, positioning, fit, backgrounds}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\Ex}{\mathbb{E}}
+\newcommand{\red}[1]{\textcolor{red}{#1}}
+\newcommand{\bth}{{\boldsymbol{\theta}}}
+
+% PyTorch code listing style.
+\definecolor{codegreen}{rgb}{0,0.5,0}
+\definecolor{codegray}{rgb}{0.4,0.4,0.4}
+\definecolor{codepurple}{rgb}{0.55,0.0,0.55}
+\definecolor{codeblue}{rgb}{0.0,0.0,0.6}
+
+\lstdefinestyle{pystyle}{
+    basicstyle=\ttfamily\scriptsize,
+    keywordstyle=\color{codeblue}\bfseries,
+    commentstyle=\color{codegreen}\itshape,
+    stringstyle=\color{codepurple},
+    numberstyle=\tiny\color{codegray},
+    breaklines=true,
+    showstringspaces=false,
+    language=Python,
+    morekeywords={self, nn, torch, Tensor},
+    columns=fullflexible,
+    keepspaces=true,
+}
+\lstset{style=pystyle}
+
+% Decks set their own \graphicspath after \usepackage{arena_beamer}, but
+% default to img/ so plain \includegraphics works without ceremony.
+\graphicspath{{img/}}
+
+% Falls back to a labeled placeholder box if the image file isn't present.
+% Usage: \imgorplaceholder{0.6\linewidth}{filename-no-ext}{Caption shown if missing}
+\newcommand{\imgorplaceholder}[3]{%
+    \IfFileExists{img/#2.png}{\includegraphics[width=#1]{#2}}{%
+    \IfFileExists{img/#2.jpg}{\includegraphics[width=#1]{#2}}{%
+    \IfFileExists{img/#2.pdf}{\includegraphics[width=#1]{#2}}{%
+    \IfFileExists{img/#2.svg}{\includegraphics[width=#1]{#2}}{%
+        \fbox{\parbox[c][0.45\textheight][c]{#1}{\centering \textit{[image: #3]}\\\scriptsize drop \texttt{img/#2.(png|jpg|pdf)}}}%
+    }}}}%
+}
+
+\endinput
