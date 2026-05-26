@@ -3,6 +3,8 @@
 Beamer decks for [ARENA](https://arena.education/) talks. Folder layout
 mirrors [`ARENA_3.0`](https://github.com/callummcdougall/ARENA_3.0).
 
+> **📄 Built PDFs:** **[github.com/ARENA-education/arena-slides/releases/latest](https://github.com/ARENA-education/arena-slides/releases/latest)**
+
 ## Add a new deck
 
 1. `cp template.tex chapter<N>_<chapter>/part<M>_<topic>/main.tex`
