@@ -1,0 +1,69 @@
+% Copy to chapterN_<chapter>/partM_<topic>/main.tex to start a new deck.
+% Drop the `handout` option to keep \pause reveals for live talks.
+\documentclass[10pt,a4paper,handout]{beamer}
+\input{../../arena_beamer.sty}
+
+\begin{document}
+
+% Title convention: "[<chapter>.<part>] <Topic Name>"
+% The extra braces around `[X.Y]` are required so beamer doesn't treat the
+% opening `[` as the start of the optional short-title argument.
+\title[{[X.Y] Talk title}]
+{{[X.Y] Talk title}}
+
+\author[John Smith]
+{John Smith}
+
+\institute[ARENA]
+{
+  ARENA
+}
+
+\date[\today]
+{\today}
+
+\frame{\titlepage}
+
+% ------------------------------------------------------------
+% Bullet-list frame with progressive reveals via \pause.
+\begin{frame}
+\frametitle{First frame}
+\begin{itemize}
+    \item A bullet.
+    \pause
+    \item Another bullet, revealed on click.
+\end{itemize}
+\end{frame}
+
+% ------------------------------------------------------------
+% Highlight key formulas / definitions in a beamer `block`.
+\begin{frame}
+\frametitle{A named result}
+\begin{block}{Some equation}
+    $$ y = Wx + b $$
+\end{block}
+\end{frame}
+
+% ------------------------------------------------------------
+% Code listings: use `[fragile]` on the frame, and wrap the listing in a
+% block (with empty title) to match the house style.
+\begin{frame}[fragile]
+\frametitle{A frame with code}
+\begin{block}{}
+\begin{lstlisting}
+def hello(x):
+    return x + 1
+\end{lstlisting}
+\end{block}
+\end{frame}
+
+% ------------------------------------------------------------
+% Centered image. Falls back to a labeled placeholder if the file is missing.
+\begin{frame}
+\frametitle{A frame with an image}
+\begin{center}
+    \imgorplaceholder{0.7\linewidth}{filename}{Description shown if missing}
+\end{center}
+\end{frame}
+
+\end{document}
