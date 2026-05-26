@@ -1,0 +1,132 @@
+name: build-slides
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Adding a new deck = create chapterN_*/partM_*/main.tex and push.
+# The `discover` job walks the tree, derives the slug from the path
+# (`<chap>.<part>-<topic-kebab>`), and feeds the build matrix.
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+      empty: ${{ steps.gen.outputs.empty }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: gen
+        shell: bash
+        run: |
+          set -euo pipefail
+          decks=()
+          while IFS= read -r tex; do
+              dir=$(dirname "$tex")
+              part_dir=$(basename "$dir")
+              chap_dir=$(basename "$(dirname "$dir")")
+
+              # chapter<N>_<rest>
+              if [[ "$chap_dir" =~ ^chapter([0-9]+)_(.*)$ ]]; then
+                  chap_num="${BASH_REMATCH[1]}"
+              else
+                  echo "::warning::Skipping $tex (chapter dir '$chap_dir' doesn't match chapter<N>_*)"
+                  continue
+              fi
+
+              # part<M>_<P>_<topic> (sub-part) OR part<M>_<topic>
+              if [[ "$part_dir" =~ ^part([0-9]+)_([0-9]+)_(.*)$ ]]; then
+                  part_num="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+                  topic="${BASH_REMATCH[3]}"
+              elif [[ "$part_dir" =~ ^part([0-9]+)_(.*)$ ]]; then
+                  part_num="${BASH_REMATCH[1]}"
+                  topic="${BASH_REMATCH[2]}"
+              else
+                  echo "::warning::Skipping $tex (part dir '$part_dir' doesn't match part<M>_*)"
+                  continue
+              fi
+
+              topic_kebab=$(echo "$topic" | tr '_' '-')
+              slug="${chap_num}.${part_num}-${topic_kebab}"
+              deck="${dir#./}"
+              echo "found: $deck  ->  $slug.pdf"
+              decks+=("{\"deck\":\"$deck\",\"slug\":\"$slug\"}")
+          done < <(find . -path './chapter*/part*/main.tex' | sort)
+
+          if [ ${#decks[@]} -eq 0 ]; then
+              echo "matrix={\"include\":[]}" >> "$GITHUB_OUTPUT"
+              echo "empty=true" >> "$GITHUB_OUTPUT"
+          else
+              matrix=$(printf '%s\n' "${decks[@]}" | jq -s '{include: .}' -c)
+              echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+              echo "empty=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: discover
+    if: needs.discover.outputs.empty == 'false'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile LaTeX
+        uses: xu-cheng/latex-action@v3
+        with:
+          working_directory: ${{ matrix.deck }}
+          root_file: main.tex
+          # Each deck's main.tex does `\input{../../arena_beamer.sty}` so no
+          # TEXINPUTS or latexmk-config magic is needed.
+
+      - name: Rename PDF
+        run: mv "${{ matrix.deck }}/main.pdf" "${{ matrix.deck }}/${{ matrix.slug }}.pdf"
+
+      - name: Upload PDF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.slug }}
+          path: ${{ matrix.deck }}/${{ matrix.slug }}.pdf
+
+  release:
+    # Rolling 'latest' release: every push to main replaces the single
+    # `latest` release with freshly-built PDFs. PRs do not publish.
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all PDFs
+        uses: actions/download-artifact@v4
+        with:
+          path: pdfs/
+
+      - name: Flatten PDF paths
+        run: |
+          mkdir -p release-assets
+          find pdfs/ -name '*.pdf' -exec cp {} release-assets/ \;
+          ls -la release-assets/
+
+      - name: Delete previous 'latest' release & tag (if any)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete latest --cleanup-tag --yes || true
+
+      - name: Publish rolling 'latest' release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest slides
+          body: |
+            Auto-built from commit ${{ github.sha }}.
+            Stable per-deck URLs: `releases/latest/download/<chap>.<part>-<topic>.pdf`
+          files: release-assets/*.pdf
+          fail_on_unmatched_files: true
+          make_latest: 'true'
