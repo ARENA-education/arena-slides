@@ -114,6 +114,54 @@ jobs:
           find pdfs/ -name '*.pdf' -exec cp {} release-assets/ \;
           ls -la release-assets/
 
+      - name: Build release body (chapter-grouped index)
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
+          REPO="${{ github.repository }}"
+          current_chap=""
+          {
+            echo "ARENA slide decks, built from commit \`${SHA_SHORT}\`."
+            while IFS= read -r tex; do
+                dir=$(dirname "$tex")
+                part_dir=$(basename "$dir")
+                chap_dir=$(basename "$(dirname "$dir")")
+                [[ "$chap_dir" =~ ^chapter([0-9]+)_(.*)$ ]] || continue
+                chap_num="${BASH_REMATCH[1]}"
+                chap_rest="${BASH_REMATCH[2]}"
+                chap_pretty=$(echo "$chap_rest" | awk -F_ '{for(i=1;i<=NF;i++)$i=toupper(substr($i,1,1)) substr($i,2);}1' OFS=' ')
+
+                if [[ "$part_dir" =~ ^part([0-9]+)_([0-9]+)_(.*)$ ]]; then
+                    part_num="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"; topic="${BASH_REMATCH[3]}"
+                elif [[ "$part_dir" =~ ^part([0-9]+)_(.*)$ ]]; then
+                    part_num="${BASH_REMATCH[1]}"; topic="${BASH_REMATCH[2]}"
+                else
+                    continue
+                fi
+                slug="${chap_num}.${part_num}-$(echo "$topic" | tr '_' '-')"
+
+                # Talk title from main.tex's `{{[X.Y] Title}}` line; fall
+                # back to the kebab topic if extraction fails.
+                title_line=$(grep -m1 '^{{\[' "$tex" || true)
+                talk_title=$(echo "$title_line" | sed -E 's/^\{\{\[[^]]+\] (.*)\}\}$/\1/')
+                if [[ -z "$talk_title" || "$talk_title" == "$title_line" ]]; then
+                    talk_title=$(echo "$topic" | tr '_' ' ')
+                fi
+
+                chap_heading="Chapter ${chap_num} — ${chap_pretty}"
+                if [[ "$chap_heading" != "$current_chap" ]]; then
+                    echo
+                    echo "## ${chap_heading}"
+                    current_chap="$chap_heading"
+                fi
+                echo "- **${chap_num}.${part_num}** ${talk_title} · [Download](https://github.com/${REPO}/releases/latest/download/${slug}.pdf)"
+            done < <(find . -path './chapter*/part*/main.tex' | sort)
+          } > release-body.md
+          echo "----- release-body.md -----"
+          cat release-body.md
+          echo "----- end -----"
+
       - name: Delete previous 'latest' release & tag (if any)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -124,9 +172,7 @@ jobs:
         with:
           tag_name: latest
           name: Latest slides
-          body: |
-            Auto-built from commit ${{ github.sha }}.
-            Stable per-deck URLs: `releases/latest/download/<chap>.<part>-<topic>.pdf`
+          body_path: release-body.md
           files: release-assets/*.pdf
           fail_on_unmatched_files: true
           make_latest: 'true'
