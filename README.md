@@ -55,3 +55,23 @@ PRs and non-`main` branches build (to catch errors early) but don't deploy.
 PDFs are **not** committed to this repo and previous versions are **not**
 archived — the LaTeX on `main` is the only source of truth. The repo stays
 flat; old PDFs are replaced on every deploy.
+
+## Where things live
+
+The repo holds *source* only. Everything visible on the live site is
+regenerated on each push.
+
+| To change... | Edit... |
+|---|---|
+| Slide content / math / figures | the deck's `main.tex` |
+| Slide images | the deck's sibling `img/` folder |
+| Shared LaTeX preamble, theme, custom macros | `arena_beamer.sty` |
+| The index page's look (HTML / CSS) | `.github/workflows/build-slides.yml`, step **"Generate public/index.html (chapter-grouped)"** — the heredoc + `<li>` template |
+| Pretty chapter names on the index page | same file, the `case "$chap_dir" in ...` block (add a row when a new `chapterN_*` lands) |
+| A deck's title as shown on the index page | the `{{[X.Y] Title}}` line near the top of that deck's `main.tex` |
+| Build/CI behaviour (when to build, deploy gating, etc.) | `.github/workflows/build-slides.yml` (other steps) |
+| Local-build defaults (handout vs. presentation) | `\providecommand{\HANDOUT}{1}` at the top of each deck's `main.tex` |
+
+What you do **not** edit (because it isn't checked in): the generated
+`index.html` and the built PDFs. Those live only in GitHub's Pages
+artifact storage and are replaced every deploy.
