@@ -10,6 +10,19 @@ on:
 # The `discover` job walks the tree, derives the slug from the path
 # (`<chap>.<part>-<topic-kebab>`), and feeds the build matrix.
 
+# Pages deploy needs `pages: write` + `id-token: write`; `contents: read`
+# is enough for everything else (we no longer write releases).
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Pages allows at most one concurrent deploy. `cancel-in-progress: false`
+# lets an in-flight deploy finish rather than getting yanked by the next push.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
 jobs:
   discover:
     runs-on: ubuntu-latest
@@ -113,14 +126,17 @@ jobs:
             ${{ matrix.deck }}/${{ matrix.slug }}.pdf
             ${{ matrix.deck }}/${{ matrix.slug }}-present.pdf
 
-  release:
-    # Rolling 'latest' release: every push to main replaces the single
-    # `latest` release with freshly-built PDFs. PRs do not publish.
+  deploy:
+    # Every push to main rebuilds and replaces the live Pages site at
+    # https://arena-education.github.io/arena-slides/. PRs build but
+    # don't deploy. No PDFs are committed to the repo — they live in
+    # GitHub's Pages artifact storage and are fully replaced each run.
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -129,13 +145,13 @@ jobs:
         with:
           path: pdfs/
 
-      - name: Flatten PDF paths
+      - name: Flatten PDF paths into public/
         run: |
-          mkdir -p release-assets
-          find pdfs/ -name '*.pdf' -exec cp {} release-assets/ \;
-          ls -la release-assets/
+          mkdir -p public
+          find pdfs/ -name '*.pdf' -exec cp {} public/ \;
+          ls -la public/
 
-      - name: Build release body (chapter-grouped index)
+      - name: Generate public/index.html (chapter-grouped)
         shell: bash
         run: |
           set -euo pipefail
@@ -143,7 +159,34 @@ jobs:
           REPO="${{ github.repository }}"
           current_chap=""
           {
-            echo "ARENA slide decks, built from commit \`${SHA_SHORT}\`."
+            cat <<'HEAD'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>ARENA Slide Decks</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+                   max-width: 760px; margin: 2.5rem auto; padding: 0 1.2rem;
+                   color: #222; line-height: 1.55; }
+            h1 { font-size: 1.6rem; border-bottom: 1px solid #eaecef; padding-bottom: .3rem; }
+            h2 { font-size: 1.15rem; margin-top: 1.8rem; color: #24292e; }
+            ul { list-style: none; padding-left: 0; }
+            li { padding: .3rem 0; }
+            a { color: #0366d6; text-decoration: none; }
+            a:hover { text-decoration: underline; }
+            .num { color: #6a737d; font-variant-numeric: tabular-nums; margin-right: .35rem; font-weight: 600; }
+            .sep { color: #d1d5da; margin: 0 .35rem; }
+            .meta { color: #6a737d; font-size: .88rem; margin-top: 2.5rem;
+                    border-top: 1px solid #eaecef; padding-top: .8rem; }
+            code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                   background: #f6f8fa; padding: .1rem .3rem; border-radius: 3px; font-size: .9em; }
+          </style>
+          </head>
+          <body>
+          <h1>ARENA Slide Decks</h1>
+          HEAD
             while IFS= read -r tex; do
                 dir=$(dirname "$tex")
                 part_dir=$(basename "$dir")
@@ -182,28 +225,26 @@ jobs:
 
                 chap_heading="Chapter ${chap_num} — ${chap_pretty}"
                 if [[ "$chap_heading" != "$current_chap" ]]; then
-                    echo
-                    echo "## ${chap_heading}"
+                    [[ -n "$current_chap" ]] && echo "</ul>"
+                    echo "<h2>${chap_heading}</h2>"
+                    echo "<ul>"
                     current_chap="$chap_heading"
                 fi
-                echo "- **${chap_num}.${part_num}** ${talk_title} · [📄 Handout](https://github.com/${REPO}/releases/latest/download/${slug}.pdf) · [🎬 Present](https://github.com/${REPO}/releases/latest/download/${slug}-present.pdf)"
+                echo "<li><span class=\"num\">${chap_num}.${part_num}</span>${talk_title}<span class=\"sep\">·</span><a href=\"./${slug}.pdf\">📄 Handout</a><span class=\"sep\">·</span><a href=\"./${slug}-present.pdf\">🎬 Present</a></li>"
             done < <(find . -path './chapter*/part*/main.tex' | sort)
-          } > release-body.md
-          echo "----- release-body.md -----"
-          cat release-body.md
+            [[ -n "$current_chap" ]] && echo "</ul>"
+            echo "<p class=\"meta\">Built from commit <code>${SHA_SHORT}</code> · source: <a href=\"https://github.com/${REPO}\">github.com/${REPO}</a></p>"
+            echo "</body></html>"
+          } > public/index.html
+          echo "----- public/index.html -----"
+          cat public/index.html
           echo "----- end -----"
 
-      - name: Delete previous 'latest' release & tag (if any)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release delete latest --cleanup-tag --yes || true
-
-      - name: Publish rolling 'latest' release
-        uses: softprops/action-gh-release@v2
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          tag_name: latest
-          name: Latest slides
-          body_path: release-body.md
-          files: release-assets/*.pdf
-          fail_on_unmatched_files: true
-          make_latest: 'true'
+          path: public/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

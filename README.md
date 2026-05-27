@@ -3,7 +3,7 @@
 Beamer decks for [ARENA](https://arena.education/) talks. Folder layout
 mirrors [`ARENA_3.0`](https://github.com/callummcdougall/ARENA_3.0).
 
-> **📄 Built PDFs:** **[github.com/ARENA-education/arena-slides/releases/latest](https://github.com/ARENA-education/arena-slides/releases/latest)**
+> **🌐 Live site:** **[arena-education.github.io/arena-slides](https://arena-education.github.io/arena-slides/)** — every deck's handout and presentation PDF, open inline in the browser.
 
 ## Add a new deck
 
@@ -11,9 +11,10 @@ mirrors [`ARENA_3.0`](https://github.com/callummcdougall/ARENA_3.0).
 2. Drop any images into a sibling `img/` folder.
 3. Push to `main`.
 
-CI auto-discovers any `chapter*/part*/main.tex` and publishes **two** PDFs
-per deck — a handout (no `\pause` reveals, compact) and a presentation
-(every `\pause` becomes a separate page, for live talks):
+That's the whole workflow. CI auto-discovers any `chapter*/part*/main.tex`,
+builds **two** PDFs per deck — a handout (no `\pause` reveals, compact)
+and a presentation (every `\pause` becomes a separate page, for live talks) —
+and republishes the live site. Nothing else to configure, no commands to run.
 
 | Folder | Handout | Presentation |
 |---|---|---|
@@ -35,13 +36,22 @@ to whichever mode you happen to want locally.
 `main.tex` loads the shared preamble via `\input{../../arena_beamer.sty}`,
 which is also where the actual `\documentclass` call lives.
 
-## Releases
+## Hosting
 
-Every push to `main` overwrites a single rolling `latest` release with the
-freshly-built PDFs. PRs and non-`main` branches build but don't publish.
-Stable download URLs:
+Every push to `main` rebuilds every deck and replaces the live site at
+**[arena-education.github.io/arena-slides](https://arena-education.github.io/arena-slides/)**.
+The index page lists all decks grouped by chapter; clicking any link opens
+the PDF inline in your browser's built-in viewer (no download).
+
+Stable per-deck URLs:
 
 ```
-https://github.com/<owner>/arena-slides/releases/latest/download/<slug>.pdf
-https://github.com/<owner>/arena-slides/releases/latest/download/<slug>-present.pdf
+https://arena-education.github.io/arena-slides/<slug>.pdf          # handout
+https://arena-education.github.io/arena-slides/<slug>-present.pdf  # presentation
 ```
+
+PRs and non-`main` branches build (to catch errors early) but don't deploy.
+
+PDFs are **not** committed to this repo and previous versions are **not**
+archived — the LaTeX on `main` is the only source of truth. The repo stays
+flat; old PDFs are replaced on every deploy.
