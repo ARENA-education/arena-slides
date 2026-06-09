@@ -25,7 +25,9 @@
 \RequirePackage{amssymb}
 \RequirePackage{graphicx}
 \RequirePackage{ulem}
-\RequirePackage{algorithm2e}
+% NOTE: do not add algorithm2e here -- it clobbers algpseudocode's \EndFor /
+% \EndFunction (fatal "Missing number" inside \begin{algorithmic}). No deck uses
+% algorithm2e's commands; pseudocode is written with algpseudocode/algorithmicx.
 \RequirePackage{algpseudocode}
 \RequirePackage{diffcoeff}
 \RequirePackage{xcolor}
