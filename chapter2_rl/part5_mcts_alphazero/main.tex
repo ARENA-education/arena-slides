@@ -857,15 +857,14 @@ Build the tree \textit{asymmetrically}, focusing on promising moves.
 		\EndLoop
 	\end{algorithmic}
 
-	\vspace{0.3cm}
+	% \vspace{0.3cm}
 
-	\begin{block}{What is the value target $z$?}
-		Each self-play game is played out to the end. \textbf{$z$ is simply that
-		game's terminal value} ($+1$/$0$/$-1$), assigned to \textit{every} state $s$
-		the game passed through---not just the final position. So the critic
-		$\hat{V}_\bth(s)$ is regressed onto the eventual outcome (a Monte-Carlo
-		estimate), which is well-defined even when $s$ is non-terminal.
-	\end{block}
+	% \begin{block}{What is the value target $z$ for non-terminal $s$?}
+	% 	Each game is played out to the very end, and states are labelled
+	% 	with that game's terminal value. The critic is then just a classifer
+	% 	that, given a state, tries to predict the terminal value if 
+	% 	the game was played out.
+	% \end{block}
 
 	\vspace{0.3cm}
 
