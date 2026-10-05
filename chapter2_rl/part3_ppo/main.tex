@@ -595,7 +595,8 @@ $$
     
     \begin{frame}
         \frametitle{Critic Loss}
-        The critic is simply trained against the returns from the environment. We define
+        The critic is trained against the \textbf{TD($\lambda$) return} $G^\lambda_t$: a $\lambda$-weighted mix of
+        real rewards and the critic's own bootstrapped estimates (not the raw return $G_t$). We define
         the \textbf{value function} loss or \textbf{critic loss} as 
         \begin{align*}
         L^{VF}(\pth) &=  \hat{\mathbb{E}}_t [V_\pth(s_t) - G^\lambda_t]^2 \\
@@ -605,6 +606,8 @@ $$
         % over a batch  $\mathcal{B} = \{\tau^1, \tau^2, \ldots \tau^{|\mathcal{B}|} \}$
         % of episodes with trajectories $\tau^b = s^b_{0}, a^b_0, r^b_1, s^b_1, \ldots, s^b_{\eplen}$ and returns $G^b_t = \sum_{k=t+1}^T r^b_k$.
         where $G^\lambda_t$ is the target for TD($\lambda$) introduced for eligibility traces.
+        With GAE advantages, $G^\lambda_t = \hat{A}_t + \hat{V}_\pi(s_t)$ (both from the critic at rollout time):
+        this is the \texttt{advantages + values} you compute in the exercises.
         
         
     \end{frame}
