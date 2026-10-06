@@ -74,8 +74,7 @@
         attention, skip connections) are what make it tractable.
     \end{itemize}
     \pause
-    \item Interpretability work later: knowing exactly what
-    the model is made of is the prerequisite for taking it apart.
+    \item Interpretability work later: it'll be useful both to build models to do interp (e.g. SAEs) and understanding how they're structured is a prerequisite for interpreting them.
 \end{itemize}
 \end{frame}
 
@@ -181,11 +180,11 @@
         \item \textbf{Translation equivariance:} a cat in the corner is still a
         cat. Same filter, applied everywhere.
         \pause
-        \item \textbf{Weight sharing:} one kernel reused across all positions
+        \item \textbf{Weight sharing:} one kernel gets reused across all positions
         $\Rightarrow$ orders of magnitude fewer parameters.
     \end{enumerate}
     \pause
-    \item Same idea, different domain: this is to images what attention is to
+    \item Attention in transformers _sort of_ does a similar thing. However, instead of a locality prior, it is a general convolution (constrained to have a backwards-looking prior in autoregressive transformers)
     sequences.
 \end{itemize}
 \end{frame}
@@ -274,7 +273,7 @@
 \frametitle{Skip connections (residual learning)}
 \begin{itemize}
     \item \textbf{Idea:} make identity the \textit{default}. Each block learns
-    a residual $F(x)$ added to its input.
+    an adjustment $F(x)$ added to its input.
 \end{itemize}
 \begin{block}{Residual block}
     $$ y = F(x; \theta) + x $$
@@ -292,8 +291,7 @@
 \begin{frame}
 \frametitle{Pretrained models and feature extraction}
 \begin{itemize}
-    \item Training ImageNet-scale models from scratch is expensive. Almost no
-    one does it twice.
+    \item Training ImageNet-scale models from scratch is expensive. What if I just want to change the existing model \textit{slightly}?
     \pause
     \item \textbf{Transfer learning:} take a pretrained backbone, replace the
     final classifier, train only the new head on your task.
