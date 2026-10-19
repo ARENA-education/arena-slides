@@ -9,7 +9,7 @@
 % small PDF), 0 = presentation (each \pause becomes an extra page, for
 % live talks). CI overrides this via latexmk -usepretex regardless of what
 % it's set to here, so this line only affects local pdflatex/latexmk runs.
-\providecommand{\HANDOUT}{1}
+\providecommand{\HANDOUT}{0}
 \input{../../arena_beamer.sty}
 
 % Deck-local macros (RL chapter math notation).
@@ -198,46 +198,47 @@
 \end{frame}
 
 
-\begin{frame}
-\frametitle{Core Assumptions}
+% \begin{frame}
+% \frametitle{Core Assumptions}
 
-These kind of environments are called \textit{Markov Descision Processes} (MDPs),
-and have the following ``nice'' properties
-\begin{enumerate}
-	\pause
-		\item \textbf{Stationary:} The environmental distribution $T$
-		is fixed and does not change over time
-		% \begin{itemize}
-		% 	\item \textit{Old data is as useful as new data}
-		% \end{itemize}
-		\pause
-		\item \textbf{Markovian:} The behaviour of the environment
-		depend only on the current state $s_t$
-		and action $a_t$. 
-		% \begin{itemize}
-		% 	\item \textit{Only need to consider the current state to act optimally,
-		% 	the past is irrelevant}
-		% \end{itemize}
-	\pause
-		\item \textbf{Fully Observable:} The state is a full description
-		of the world
-		% \begin{itemize}
-		% 	\item \textit{Agent always has access to sufficient information to 
-		% 	(at least in principle) choose the optimal action}
-		% \end{itemize}
-	\pause
-		\item \textbf{Reward Hypothesis:} 
-		\begin{quote}
-			``That all of what we mean by goals and purposes can be well thought of as
-			the maximization of the expected value of the cumulative sum of a received
-			scalar signal (called reward).'' -Rich Sutton
-			% \begin{itemize}
-			% 	\item Reward alone is sufficient to communicate any desired behaviour
-			% \end{itemize}
-		\end{quote}
-\end{enumerate}
+% These kind of environments are called \textit{Markov Descision Processes} (MDPs),
+% and have the following ``nice'' properties
+% \begin{enumerate}
+% 	\pause
+% 		\item \textbf{Stationary:} The environmental distribution $T$
+% 		is fixed and does not change over time
+% 		% \begin{itemize}
+% 		% 	\item \textit{Old data is as useful as new data}
+% 		% \end{itemize}
+% 		\pause
+% 		\item \textbf{Markovian:} The behaviour of the environment
+% 		depend only on the current state $s_t$
+% 		and action $a_t$. 
+% 		% \begin{itemize}
+% 		% 	\item \textit{Only need to consider the current state to act optimally,
+% 		% 	the past is irrelevant}
+% 		% \end{itemize}
+% 	\pause
+% 		\item \textbf{Fully Observable:} The state is a full description
+% 		of the world
+% 		% \begin{itemize}
+% 		% 	\item \textit{Agent always has access to sufficient information to 
+% 		% 	(at least in principle) choose the optimal action}
+% 		% \end{itemize}
+% 	\pause
+% 		\item \textbf{Reward Hypothesis:} 
+% 		\begin{quote}
+% 			``That all of what we mean by goals and purposes can be well thought of as
+% 			the maximization of the expected value of the cumulative sum of a received
+% 			scalar signal (called reward).'' -Rich Sutton
+% 			% \begin{itemize}
+% 			% 	\item Reward alone is sufficient to communicate any desired behaviour
+% 			% \end{itemize}
+% 		\end{quote}
+% \end{enumerate}
 
-\end{frame}
+% \end{frame}
+
 
 \begin{frame}
 \frametitle{Value Function}
@@ -260,6 +261,31 @@ and have the following ``nice'' properties
 	
 \end{frame}
 
+\begin{frame}
+	\begin{itemize}
+		\item States $\S = {s_0, s_L,s_R}$, actions $\A = \{a_L, a_R\}$,
+		possible rewards $\R= \{0,1,2\}$.
+		\item Each transition indicates if an action is taken, the reward returned
+		and which state to transition to
+		\item What is the best action from state $s_0$?
+	\end{itemize}
+	\frametitle{Example Environment}
+		\begin{figure}
+		\centering
+		\includegraphics[width=0.7\linewidth]{img/w3d2_env1}
+		\label{fig:w3d2env1}
+	\end{figure}
+	\pause
+	\textbf{Exercise:} Depends on the choice of $\gamma$! Verify that
+	\begin{align*}
+		V_{\pi_L}(s_0) &= \frac{1}{1-\gamma^2} \quad
+		V_{\pi_R}(s_0) = \frac{2\gamma}{1-\gamma^2}
+	\end{align*}
+	so breakeven is at $\gamma = \frac{1}{2}$.
+\end{frame}
+
+
+
 
 \begin{frame}
 	\frametitle{Bellman Equation}
@@ -272,16 +298,105 @@ G_t &= r_{t+1} + \gamma r_{t+2} + \gamma^2 r_{t+3} + \ldots \\
 \pause
 we can then define the value function recursively,
 \begin{align*}
-\onslide<2->{V_\pi(s) &= \mathbb{E}_\pi [G_t \mid s_t = s]}\\
-\onslide<3->{&= \mathbb{E}_\pi [r_{t+1} + \gamma G_{t+1} \mid s_t = s]} \\
-\onslide<4->{&= \mathbb{E}_\pi [r_{t+1} \mid s_t = s]
-+ \gamma \mathbb{E}_\pi [G_{t+1} \mid s_t = s]} \\
-\onslide<5->{&= \sum_{a} \pi(a | s) \sum_{s' } T(s' | s, a) R(s,a,s')  \\
-&\quad + \gamma \sum_{a} \pi(a | s) \sum_{s'} T(s' | s, a) 
-\mathbb{E}_\pi [G_{t+1} \mid s_{t+1} = s']} \\
-\onslide<6->{&= \sum_{a} \pi(a | s) \sum_{s' } T(s' | s, a) \left( R(s,a,s') + \gamma V_\pi(s') \right)}
+V_\pi(s) &= \mathbb{E}_\pi [G_t \mid s_t = s]\\
+&= \mathbb{E}_\pi [r_{t+1} + \gamma G_{t+1} \mid s_t = s]
 	\end{align*}
+
+How to compute $\mathbb{E}_\pi$?
+
+% % Backup diagram (Sutton & Barto style): open circles = states, filled dots = actions
+% \begin{center}
+% \begin{tikzpicture}[
+% 	state/.style={circle, draw, thick, minimum size=4mm, inner sep=0pt},
+% 	action/.style={circle, fill, minimum size=2mm, inner sep=0pt},
+% 	level distance=7.5mm, sibling distance=22mm, thick,
+% 	lbl/.style={font=\scriptsize, inner sep=1pt}]
+% 	\node[state, label=right:{$s$}] (s) {}
+% 		child { node[action, label=left:{$a$}] {}
+% 			[sibling distance=11mm]
+% 			child { node[state] {} }
+% 			child { node[state, label=right:{$s'$}] {}
+% 				edge from parent node[lbl, right] {$r$} }
+% 			edge from parent node[lbl, above left] {$\pi(a \mid s)$} }
+% 		child { node[action] {}
+% 			[sibling distance=11mm]
+% 			child { node[state] {} }
+% 			child { node[state] {}
+% 				edge from parent node[lbl, right] {$T(s' \mid s, a)$} } };
+% \end{tikzpicture}
+% \end{center}
+
 \end{frame}
+
+
+\begin{frame}
+% CLAUDE
+% Backup diagram (Sutton & Barto style): open circles = states, filled dots = actions
+\begin{center}
+\begin{tikzpicture}[
+	state/.style={circle, draw, thick, minimum size=4mm, inner sep=0pt},
+	action/.style={circle, fill, minimum size=2mm, inner sep=0pt},
+	level distance=7.5mm, sibling distance=22mm, thick,
+	lbl/.style={font=\scriptsize, inner sep=1pt}]
+	\node[state, label=right:{$s$}] (s) {}
+		child { node[action, red, label=left:{\red{$a$}}] {}
+			[sibling distance=11mm]
+			child { node[state, blue] {} }
+			child { node[state, blue, label=right:{\blue{$s'$}}] {}
+				edge from parent node[lbl, right] {$r$} }
+			edge from parent node[lbl, above left] {\red{$\pi(a \mid s)$}} }
+		child { node[action, red] {}
+			[sibling distance=11mm]
+			child { node[state, blue] {} }
+			child { node[state, blue] {}
+				edge from parent node[lbl, right] {\blue{$T(s' \mid s, a)$}} } };
+\end{tikzpicture}
+\end{center}
+\pause
+
+\vspace{-1em}
+\[
+\mathbb{E}_\pi [r_{t+1} + \gamma G_{t+1} \mid s_t = s]
+\]
+\pause
+Consider all the \red{actions $a$ that $\pi$} might choose under $s$,
+\[
+= \red{\sum_a \pi(a \mid s)}\, \mathbb{E}_\pi[r_{t+1} + \gamma G_{t+1} \mid s_t = s, \red{a_t = a}]
+\]
+\pause
+\ldots and then all the \blue{states $s'$ that $T$} might choose under $s,a$,
+\[
+= \red{\sum_a \pi(a \mid s)} \blue{\sum_{s'} T(s' \mid s,a)}\, \mathbb{E}_\pi[r_{t+1} + \gamma G_{t+1} \mid s_t = s, \red{a_t = a}, \blue{s_{t+1} = s'}]
+\]
+\pause
+\ldots weighted by how likely $\pi$ and $T$ are to choose them.
+
+\end{frame}
+
+\begin{frame}
+	Note that
+	\begin{align*}
+	& \mathbb{E}_\pi[r_{t+1} + \gamma G_{t+1} \mid s_t = s, \red{a_t = a}, \blue{s_{t+1} = s'}] \\
+	&\onslide<2->{= \mathbb{E}_\pi[r_{t+1} \mid s_t = s, \red{a_t = a}, \blue{s_{t+1} = s'}]
+	+ \gamma \mathbb{E}_\pi[G_{t+1} \mid s_t = s, \red{a_t = a}, \blue{s_{t+1} = s'}]} \\ 
+	&\onslide<3->{= R(s,\red{a},\blue{s'})
+	+ \gamma \mathbb{E}_\pi[G_{t+1} \mid \blue{s_{t+1} = s'}]} \\ 
+	&\onslide<4->{= R(s,\red{a},\blue{s'})
+	+ \gamma V_\pi(\blue{s'})}
+	\end{align*}
+	\onslide<5->{hence}
+	\begin{align*}
+    &\onslide<5->{V_\pi(s)}\\  &\onslide<5->{= \mathbb{E}_\pi [G_t \mid s_t = s]}\\
+	&\onslide<6->{= \red{\sum_a \pi(a \mid s)} \blue{\sum_{s'} T(s' \mid s,a)} \mathbb{E}_\pi [r_{t+1} + \gamma G_{t+1} \mid s_t = s, \red{a_t = a}, \blue{s_{t+1} = s'}]} \\
+	&\onslide<7->{= \red{\sum_a \pi(a \mid s)} \blue{\sum_{s'} T(s' \mid s,a)} \left( R(s,\red{a},\blue{s'})
+	+ \gamma V_\pi(\blue{s'}) \right)}
+	\end{align*}
+
+
+
+\end{frame}
+
+
 
 \begin{frame}
 	\frametitle{Policy Evaluation}
@@ -323,29 +438,6 @@ in terms of the value of all states $\{V_\pi(s')\}_{s' \in \S}$.
 \end{frame}
 
 
-
-\begin{frame}
-	\begin{itemize}
-		\item States $\S = {s_0, s_L,s_R}$, actions $\A = \{a_L, a_R\}$,
-		possible rewards $\R= \{0,1,2\}$.
-		\item Each transition indicates if an action is taken, the reward returned
-		and which state to transition to
-		\item What is the best action from state $s_0$?
-	\end{itemize}
-	\frametitle{Example Environment}
-		\begin{figure}
-		\centering
-		\includegraphics[width=0.7\linewidth]{img/w3d2_env1}
-		\label{fig:w3d2env1}
-	\end{figure}
-	\pause
-	\textbf{Exercise:} Depends on the choice of $\gamma$! Verify that
-	\begin{align*}
-		V_{\pi_L}(s_0) &= \frac{1}{1-\gamma^2} \quad
-		V_{\pi_R}(s_0) = \frac{2\gamma}{1-\gamma^2}
-	\end{align*}
-	so breakeven is at $\gamma = \frac{1}{2}$.
-\end{frame}
 
 
 \begin{frame}
