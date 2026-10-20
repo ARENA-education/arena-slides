@@ -79,10 +79,10 @@
 \end{itemize}
 \end{frame}
 
-\begin{frame}
-	\centering
-		\includegraphics[height=\textheight]{img/drake}
-\end{frame}
+% \begin{frame}
+% 	\centering
+% 		\includegraphics[height=\textheight]{img/drake}
+% \end{frame}
 
 \begin{frame}
 	\frametitle{Difficulties with using Neural Networks for RL}
@@ -106,7 +106,6 @@
 		\begin{itemize}
 			\pause
 			\item Q-Learning bootstraps using estimates of the future
-			\item VPG already handles exploration as we will see
 			\item Can use a critic to learn estimates of the future (tomorrow)
 		\end{itemize}
 		\pause
@@ -177,7 +176,7 @@
 		\end{align*}
 		Loss function is now
 		$$
-		L(\theta) = \frac{1}{N} \sum_{i=1}^N \left(y_t - \widehat{Q}_*(s_t,a_t; \theta )\right)^2
+		L(\theta) = \frac{1}{N} \sum_{i=1}^N \left(y^i - \widehat{Q}_*(s^i,a^i; \theta )\right)^2
 		$$
 		\end{itemize}
 \end{frame}
@@ -213,8 +212,8 @@
 %        so the state space $\mathcal{S} \subseteq \mathbb{R}^4$. 
 %    \end{itemize} 
     \item Environment is \textbf{episodic}, and agent always starts at/near \textbf{starting 
-    state} $\mathbf{s}_0$. We generate a full episode, and then afterwards learn. No discount
-    ($\gamma = 1$).
+    state} $\mathbf{s}_0$. We collect a rollout of experience, and then afterwards learn. Discount
+    factor $\gamma \in [0, 1]$.
     \item Define measure of performance (\textbf{joy}) as
     $$
     J(\bth) := V_{\pi_\bth}(\mathbf{s}_0)
@@ -274,19 +273,15 @@
     \frametitle{Softmax policy}
     
     \begin{itemize}
-    \item In practice, $\pi_\bth : \S \to \Delta \A$ is a neural network $\mathbf{h}$, mapping a state vector $\mathbf{s}$ to 
+    \item In practice, $\pi_\bth : \S \to \Delta \A$ is a neural network mapping a state vector $\mathbf{s}$ to 
     a vector of logits, one for each action $\A = \{a_1, \ldots, a_n\}$.
-    $$
-    \mathbf{h}(\mathbf{s};\bth) = [h_1(\mathbf{s};\bth), \ldots, h_n(\mathbf{s};\bth)]
-    $$
-    from which the action is sampled by softmax'ing the logits
-    $$
-    \pi(a_i | \mathbf{s}; \bth) := 
-    \frac{\exp h_i(\mathbf{s};\bth)}{\sum_j \exp h_j(\mathbf{s};\bth)}
-    $$
+    % $$
+    % \mathbf{h}(\mathbf{s};\bth) = [h_1(\mathbf{s};\bth), \ldots, h_n(\mathbf{s};\bth)]
+    % $$
+    from which the action is sampled from the distribution.
     \item More principled than $\epsilon$-greedy, as we get exploration for free,
-    and exploratory actions are not selected at random, but with a bias towards
-    actions believed to be good.
+    and exploratory actions are not selected at random, but with a bias away from
+	actions believed to be bad.
 \end{itemize}
 \end{frame}
 %
@@ -355,12 +350,12 @@
 \begin{frame}
 	\frametitle{Policy Gradient Framework}
 	\begin{itemize}
-		\item Assume episodic environment, episode length (horizon) $\eplen$, no discount $\gamma=1$. 
+		\item Assume episodic environment, episode length (horizon) $\eplen$, discount $\gamma$. 
         \item Assume fixed starting state $s_0$. Markov environment $\env(s'|s,a)$.
 		\item Define $J(\bth) = V_{\pi_{\bth}}(s_0) = \mathbb{E}_{\tau \sim \pi_\bth}[G(\tau)]$. 
 		\item Let  $\tau = s_{0}, a_0, r_1, s_1, \ldots, s_{\eplen-1}, a_{\eplen-1}, r_{\eplen}, s_{\eplen}$ denote
 		a trajectory 
-		\item $G(\tau) = \sum_{t=1}^{\eplen} r_t$ is the undiscounted return for trajectory $\tau$.
+		\item $G(\tau) = \sum_{t=1}^{\eplen} \gamma^{t-1} r_t$ is the discounted return for trajectory $\tau$.
         \begin{align*}
             \text{Pr}(\tau | \bth) &=  \prod_{t=0}^{\eplen-1} \pi_\bth(a_t|s_t) \env(s_{t+1} | s_t,a_t) \\
             & = \pi_\bth(a_0|s_0) \env(s_1 | s_0,a_0)  \ldots \pi_\bth(a_{\eplen-1}|s_{\eplen-1}) \env(s_{\eplen} | s_{\eplen-1},a_{\eplen-1})
@@ -405,7 +400,7 @@
 	\left[  \sum_{t=0}^{\eplen-1} \nabla_\bth \log \pi_\bth(a_t|s_t) G(\tau) \right] 
 	$$
 %	\bs
-VPG generates a trajectory, learns, then discards it, generates another.
+VPG runs many environments in parallel for a fixed window of steps (finished episodes auto-reset), learns from that rollout, then discards it and collects another.
 \end{frame}
 
 
@@ -417,7 +412,7 @@ VPG generates a trajectory, learns, then discards it, generates another.
     \item \href{https://spinningup.openai.com/en/latest/spinningup/extra\_pg\_proof2.html}{Can be shown that}
     we can replace $G(\tau)$ with the \textbf{reward-to-go}:
     $$
-    G_t := \sum_{t'=t+1}^{\eplen} r_{t'} = r_{t+1} + \ldots + r_{\eplen}
+    G_t := \sum_{t'=t+1}^{\eplen} \gamma^{t'-t-1} r_{t'} = r_{t+1} + \gamma r_{t+2} + \ldots + \gamma^{\eplen-t-1} r_{\eplen}
     $$
     %which (in expectation) is the same as the Q-value $Q_{\pi_\bth}(s_t,a_t)$.
     \item This gives a lower-variance, unbiased estimator.
@@ -451,7 +446,7 @@ VPG generates a trajectory, learns, then discards it, generates another.
     \label{fig:vpg}
 \end{figure}
 %	\bs
-VPG generates a trajectory, learns, then discards it, generates another.
+VPG runs many environments in parallel for a fixed window of steps (finished episodes auto-reset), learns from that rollout, then discards it and collects another.
 \end{frame}
 
 \begin{frame}
@@ -543,7 +538,7 @@ The ratio $\frac{p(x)}{q(x)}$ is called the \textbf{importance weight} or \textb
 	\begin{itemize}
 		\item Generate episode $\tau^i = (s_0^i, a_0^i, r_1^i, s_1^i, \ldots, s_\eplen^i)$
 		\item Store log probabilities: $\log \pi_{\text{old}}(a_t^i | s_t^i) = \log \pi_{\bth}(a_t^i | s_t^i)$
-		\item Compute returns $G_t^i = \sum_{k=t+1}^\eplen r_k^i$ for all $t$
+		\item Compute returns $G_t^i = \sum_{k=t+1}^\eplen \gamma^{k-t-1} r_k^i$ for all $t$
 		\item Store $\{\tau^i, G_t^i, \log \pi_{\text{old}}(a_t^i | s_t^i)\}_{i=1}^{N}$.
 	\end{itemize}
 	\item Sample batch $\mathcal{B} = \{\tau^i, G_t^i, \log \pi_{\text{old}}(a_t^i | s_t^i)\}_{i=1}^{|\mathcal{B}|}$.
