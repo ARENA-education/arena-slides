@@ -51,9 +51,9 @@
     Batch of full episodes collected from $\pi_{\bth_\old}$, then do gradient ascent on
     \begin{block}{VPG joy (with importance sampling)}
         $$
-        J(\bth) = \hat{\Ex}_t \Big[ \red{r_t(\bth)} \, \blue{G_t} \Big],
+        J(\bth) = \hat{\Ex}_t \Big[ \red{\rho_t(\bth)} \, \blue{G_t} \Big],
         \qquad
-        \red{r_t(\bth)} = \frac{\pi_\bth(a_t|s_t)}{\pi_{\bth_\old}(a_t|s_t)}
+        \red{\rho_t(\bth)} = \frac{\pi_\bth(a_t|s_t)}{\pi_{\bth_\old}(a_t|s_t)}
         $$
     \end{block}
     where $\hat{\Ex}_t$ averages over every timestep in the batch.
@@ -68,7 +68,7 @@
         \item \blue{$G_t$ needs full episode.} We want to learn from short, \\
         fixed-length rollouts. \hfill $\to$ \textbf{Use GAE}
         \item \red{$\pi_\bth$ can drift} far from $\pi_{\bth_\old}$ if batches
-        reused. \hfill $\to$ \textbf{clamp $r_t(\bth)$}
+        reused. \hfill $\to$ \textbf{clamp $\rho_t(\bth)$}
     \end{enumerate}
     \pause
     Add an \textbf{entropy bonus} to keep exploring, and that's PPO.
@@ -189,7 +189,7 @@
 
 
 \begin{frame}
-    \frametitle{Aside: $n$-step update}
+    \frametitle{$n$-step TD update}
     Complete return $G_t \equiv G_{t:T} = r_{t+1} + \gamma r_{t+2} + \ldots + \gamma^{T-t-1} r_T$.
     Can write approximations using $n$-step returns:
     $$
@@ -212,19 +212,20 @@
 
 
 \begin{frame}
-    \frametitle{$n$-step: some dice, then the critic}
-    $n$-step advantage: $n$ \red{real rewards}, then the \blue{critic's guess} for the rest.
+    \frametitle{$n$-step advantages}
+    $n$-step advantage: $n$ \textbf{real rewards}, then the \textbf{critic's guess} for the rest.
     Everywhere $V_\pi$ appeared, use the critic as it was during the rollout, $\Vold$:
     $$
-    A^{(n)}_t = G_{t:t+n} - \Vold(s_t) = \red{r_{t+1} + \ldots + \gamma^{n-1} r_{t+n}}
-    + \blue{\gamma^n \Vold(s_{t+n})} - \Vold(s_t)
+    A^{(n)}_t = G_{t:t+n} - \Vold(s_t) = r_{t+1} + \ldots + \gamma^{n-1} r_{t+n}
+    + \gamma^n \Vold(s_{t+n}) - \Vold(s_t)
     $$
     \pause
     This is just a sum of TD errors. For $n = 2$:
     \begin{align*}
-        \delta_t + \gamma \delta_{t+1}
-        &= r_{t+1} + \cancel{\gamma \Vold(s_{t+1})} - \Vold(s_t) \\
-        &\quad + \gamma r_{t+2} + \gamma^2 \Vold(s_{t+2}) - \cancel{\gamma \Vold(s_{t+1})} \\
+        \red{\delta_t} + \gamma \blue{\delta_{t+1}}
+        &= \red{r_{t+1}} + \red{\cancel{\gamma \Vold(s_{t+1})}} - \red{\Vold(s_t)} \\
+        &\quad + \gamma \blue{r_{t+2}} + \gamma^2 \blue{\Vold(s_{t+2})} - \cancel{\gamma \blue{\Vold(s_{t+1})}} \\
+        &= r_{t+1} + \gamma r_{t+2} + \gamma^2 \Vold(s_{t+2}) - \Vold(s_t) \\
         &= A^{(2)}_t
     \end{align*}
     \pause
@@ -246,7 +247,7 @@
     \begin{block}{Generalised Advantage Estimate (GAE)}
         \vspace{-0.4cm}
         \begin{align*}
-            A_t &= (1-\lambda)\big(A^{(1)}_t + \lambda\,A^{(2)}_t + \lambda^2\,A^{(3)}_t + \ldots\big) \\
+            A_t &\propto A^{(1)}_t + \lambda\,A^{(2)}_t + \lambda^2\,A^{(3)}_t + \ldots \\
             &= \delta_t + (\gamma\lambda)\,\delta_{t+1} + (\gamma\lambda)^2\,\delta_{t+2} + \ldots
         \end{align*}
     \end{block}
@@ -286,7 +287,7 @@
     \begin{block}{GAE recursion}
         \vspace{-0.4cm}
         \begin{align*}
-            A_t &= \delta_t + \gamma\lambda\,(1-d_{t+1})\,A_{t+1}, \qquad A_{M-1} = \delta_{M-1} \\
+            A_t &= \delta_t + \gamma\lambda\,(1-d_{t+1})\,A_{t+1}, \qquad A_{M} = 0 \\
             \delta_t &= r_{t+1} + \gamma\,(1-d_{t+1})\,\Vold(s_{t+1}) - \Vold(s_t)
         \end{align*}
     \end{block}
@@ -345,16 +346,16 @@
     \frametitle{Reusing a batch, and why it's dangerous}
     The actor's joy is now
     $
-    J(\bth) = \hat{\Ex}_t\big[r_t(\bth)\,A_t\big]
+    J(\bth) = \hat{\Ex}_t\big[\rho_t(\bth)\,A_t\big]
     $
     with
     $
-    r_t(\bth) = \frac{\pi_\bth(a_t|s_t)}{\pi_{\bth_\old}(a_t|s_t)}.
+    \rho_t(\bth) = \frac{\pi_\bth(a_t|s_t)}{\pi_{\bth_\old}(a_t|s_t)}.
     $
     \begin{itemize}
         \pause
-        \item First step: $\bth = \bth_\old$, so $r_t = 1$ and
-        $\nabla_\bth r_t = \nabla_\bth \log \pi_\bth(a_t|s_t)$.
+        \item First step: $\bth = \bth_\old$, so $\rho_t = 1$ and
+        $\nabla_\bth \rho_t = \nabla_\bth \log \pi_\bth(a_t|s_t)$.
         This is exactly the VPG step.
         \pause
         \item We want to take \textit{many} steps on the same batch. It was expensive to collect.
@@ -364,7 +365,7 @@
         The further $\pi_\bth$ moves, the more wrong $J(\bth)$ becomes.
         \pause
         \item $J(\bth)$ rewards large updates: if $A_t > 0$, it grows
-        the more we push $r_t$ up.
+        the more we push $\rho_t$ up.
     \end{itemize}
     \pause
     \vspace{0.2cm}
@@ -375,11 +376,11 @@
     \frametitle{Clipping: stop once you've moved enough}
     \begin{block}{PPO clipped joy}
         $$
-        J^{CLIP}(\bth) = \hat{\Ex}_t\Big[\min\big(r_t(\bth)\,A_t,\;
-        \text{clip}(r_t(\bth), 1-\eps, 1+\eps)\,A_t\big)\Big]
+        J^{CLIP}(\bth) = \hat{\Ex}_t\Big[\min\big(\rho_t(\bth)\,A_t,\;
+        \text{clip}(\rho_t(\bth), 1-\eps, 1+\eps)\,A_t\big)\Big]
         $$
     \end{block}
-    with $\eps \approx 0.2$. Plotting one term against $r_t$:
+    with $\eps \approx 0.2$. Plotting one term against $\rho_t$:
     \begin{columns}
     \begin{column}{0.48\linewidth}
     \centering
@@ -388,7 +389,7 @@
         width=5.2cm, height=3.4cm, axis lines=middle,
         xmin=0, xmax=2, ymin=0, ymax=1.6,
         xtick={0.8,1.2}, xticklabels={$1\!-\!\eps$, $1\!+\!\eps$}, ytick=\empty,
-        xlabel={$r_t$}, title={\scriptsize $A_t > 0$},
+        xlabel={$\rho_t$}, title={\scriptsize $A_t > 0$},
         tick label style={font=\tiny}, label style={font=\scriptsize}]
         \addplot[dashed, gray, domain=1.2:1.6] {x};
         \addplot[very thick, blue, domain=0:1.2] {x};
@@ -403,7 +404,7 @@
         width=5.2cm, height=3.4cm, axis lines=middle,
         xmin=0, xmax=2, ymin=-1.6, ymax=0,
         xtick={0.8,1.2}, xticklabels={$1\!-\!\eps$, $1\!+\!\eps$}, ytick=\empty,
-        xlabel={$r_t$}, title={\scriptsize $A_t < 0$},
+        xlabel={$\rho_t$}, title={\scriptsize $A_t < 0$},
         tick label style={font=\tiny}, label style={font=\scriptsize}]
         \addplot[dashed, gray, domain=0.4:0.8] {-x};
         \addplot[very thick, red, domain=0:0.8] {-0.8};
@@ -469,7 +470,7 @@
     \renewcommand{\arraystretch}{1.3}
     \begin{tabular}{l|l|l}
         \textbf{Stored during rollout} & \textbf{Computed after rollout} & \textbf{Recomputed per minibatch} \\ \hline
-        $s_t,\ a_t,\ r_{t+1},\ d_{t+1}$ & $A_t$ (GAE) & $\pi_\bth(a_t|s_t)$, hence $r_t(\bth)$ \\
+        $s_t,\ a_t,\ r_{t+1},\ d_{t+1}$ & $A_t$ (GAE) & $\pi_\bth(a_t|s_t)$, hence $\rho_t(\bth)$ \\
         $\log \pi_{\bth_\old}(a_t|s_t)$ & $G^\lambda_t = A_t + V_{\pth_\old}(s_t)$ & $H_\bth(s_t)$ \\
         $V_{\pth_\old}(s_t)$ & & $V_\pth(s_t)$ \\ \hline
         \multicolumn{2}{c|}{\textit{frozen: from the networks at rollout time}} & \textit{live: carries gradients}
@@ -537,7 +538,7 @@
     \pause
     \vspace{0.2cm}
     After the first gradient step, $\pi_\bth \neq \pi_{\bth_\old}$, so the data is
-    slightly off-policy. The ratio $r_t(\bth)$ corrects for this, and clipping stops
+    slightly off-policy. The ratio $\rho_t(\bth)$ corrects for this, and clipping stops
     $\pi_\bth$ moving so far that the correction fails.
 \end{frame}
 
@@ -553,11 +554,11 @@
         moving too far from the policy that collected it.
         \item \textbf{Entropy bonus:} keep exploring/prevent early policy collapse.
     \end{enumerate}
-    \pause
-    \vspace{0.3cm}
-    Is it principled? Partly. Baselines are exact; per-step importance sampling is an
-    approximation; clipping and the entropy bonus are heuristics. Works very well!
-    \vspace{0.3cm}
+    % \pause
+    % \vspace{0.3cm}
+    % Is it principled? Partly. Baselines are exact; per-step importance sampling is an
+    % approximation; clipping and the entropy bonus are heuristics. Works very well!
+    % \vspace{0.3cm}
 
     % \textbf{Looking ahead to RLHF:} the clipped ratio carries straight over to RL on LLMs.
     % GRPO even drops the critic and GAE: it estimates advantages by comparing several
