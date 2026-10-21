@@ -1,0 +1,819 @@
+% !TEX root = ./main.tex
+% ^ Tells LaTeX Workshop (Cursor/VSCode) to treat this file as the build root.
+% Needed because \documentclass lives in arena_beamer.sty (\input'ed below)
+% rather than in this file, and the extension's root-file detector greps for
+% \documentclass without following \input -- so without this line it reports
+% "No root file found" and silently aborts Ctrl+Alt+B. CLI builds are
+% unaffected; latexmk/pdflatex follow \input fine.
+% Local-dev build-mode toggle. 1 = handout (all \pause overlays collapsed,
+% small PDF), 0 = presentation (each \pause becomes an extra page, for
+% live talks). CI overrides this via latexmk -usepretex regardless of what
+% it's set to here, so this line only affects local pdflatex/latexmk runs.
+\providecommand{\HANDOUT}{1}
+\input{../../arena_beamer.sty}
+
+% Deck-local macros (RL chapter math notation).
+\newcommand{\A}{\mathcal{A}}
+\newcommand{\eps}{\epsilon}
+\newcommand{\green}[1]{\textcolor{green!50!black}{#1}}
+\newcommand{\pth}{{\boldsymbol{\phi}}}
+\newcommand{\old}{\text{old}}
+\newcommand{\refm}{\text{ref}}
+\newcommand{\piold}{\pi_{\bth_\old}}
+\newcommand{\piref}{\pi_\refm}
+\newcommand{\KL}{D_{\mathrm{KL}}}
+% log-ratio to the reference model; deliberately not rho, which is the
+% importance ratio to the old policy (as in the PPO deck)
+\newcommand{\lr}{u}
+
+\begin{document}
+
+\title[{[2.4] RLHF \& RLVR}]
+{{[2.4] RLHF \& RLVR}}
+
+\author[David Quarel]
+{David Quarel}
+
+\institute[ARENA]
+{
+  ARENA
+}
+
+\date[\today]
+{\today}
+
+\frame{\titlepage}
+
+% ============================================================
+\section{Where we left off}
+
+\begin{frame}
+    \frametitle{Recap: PPO}
+    \begin{block}{PPO clipped joy}
+        \vspace{-0.3cm}
+        $$
+        J^{CLIP}(\bth) = \hat{\Ex}_t\Big[\min\big(\rho_t(\bth)\,\red{A_t},\;
+        \text{clip}(\rho_t(\bth), 1-\eps, 1+\eps)\,\red{A_t}\big)\Big],
+        \quad
+        \rho_t(\bth) = \frac{\pi_\bth(a_t|s_t)}{\piold(a_t|s_t)}
+        $$
+    \end{block}
+    \begin{itemize}
+        \item \red{$A_t$} came from a \textbf{critic} $V_\pth$ and GAE.
+        \item Clipping lets us reuse each batch for several gradient steps.
+        \item An entropy bonus kept the policy exploring.
+    \end{itemize}
+    \pause
+    \vspace{0.3cm}
+    Today: $\pi_\bth$ is now a \textbf{language model}.
+    \begin{enumerate}
+        \item \textbf{RLHF}: reward model trained on human preferences + KL penalty
+        \item \textbf{RLVR}: reward from a verifier impossible to reward hack
+    \end{enumerate}
+\end{frame}
+
+% ============================================================
+\section{The language model as an environment}
+
+\begin{frame}
+    \frametitle{States, actions, rewards}
+    \begin{itemize}
+        \item \textbf{Policy} $\pi_\bth$: the \textit{pre-trained} language model.
+        \item \textbf{Action} $a_t$: the next token. $\A$ is the vocabulary.
+        \item \textbf{State} $s_t$: the \textit{whole} sequence so far, $s_t = s_0 a_0 \ldots a_{t-1}$.
+        \item \textbf{Initial State} $s_0$ : the prompt.
+        \item \textbf{Env}: concatenate, $T(s_t, a_t) = s_t a_t = s_{t+1}$. Simple and deterministic.
+    \end{itemize}
+    \begin{center}
+    \begin{tikzpicture}[tok/.style={draw, thick, rounded corners, minimum height=7mm, font=\small},
+        node distance=1.5mm]
+        \node[tok, fill=gray!15] (p) {\texttt{This is}};
+        \node[tok, fill=red!10, right=of p] (a0) {\texttt{\ a}};
+        \node[tok, fill=red!10, right=of a0] (a1) {\texttt{\ conversation}};
+        \node[tok, fill=red!10, right=of a1] (a2) {\texttt{\ between}};
+        \node[right=of a2] (dots) {$\cdots$};
+        \node[tok, fill=red!10, right=of dots] (aT) {\texttt{.}};
+        \node[below=1mm of p, font=\scriptsize] {$s_0$ (prompt)};
+        \node[below=1mm of a0, font=\scriptsize] {$a_0$};
+        \node[below=1mm of a1, font=\scriptsize] {$a_1$};
+        \node[below=1mm of a2, font=\scriptsize] {$a_2$};
+        \node[below=1mm of aT, font=\scriptsize] {$a_{T-1}$};
+        \node[blue, right=4mm of aT, align=left, font=\small] (r) {$r_T = R(s_T)$};
+        \draw[->, thick, blue] (aT) -- (r);
+    \end{tikzpicture}
+    \end{center}
+    \pause
+    \begin{itemize}
+        \item \textbf{Reward}: $0$ on every step, except the last: $r_T = R(s_0 a_0 \ldots a_{T-1})$.
+        \item Fixed length $T$, one reward at the end: discounting only multiplies $r_T$ by
+        $\gamma^{T-1}$, so we \textbf{don't discount}. All returns $G_1,\ldots,G_T$ equal final reward $r_T$.
+        %\item We $\sim$never visit the same state twice. 
+        \item All the difficulty is in learning to please $R$.
+    \end{itemize}
+\end{frame}
+
+% ============================================================
+\section{GRPO}
+
+\begin{frame}
+    \frametitle{Do we need a critic?}
+    PPO's advantage needs $V(s_t)$. For a language model, that means:
+    \begin{itemize}
+        \item Graft a \textbf{value head} onto the residual stream, mapping it to a scalar.
+        \item It starts random, and must learn the value of a half-written sentence.
+        \item Extra parameters, extra memory, extra things to tune.
+    \end{itemize}
+    \pause
+    \vspace{0.2cm}
+    \textbf{GRPO} (DeepSeekMath, 2024): skip the critic.
+    \begin{itemize}
+        \item Sample $G$ \textit{outcomes} $o_1, \ldots, o_G$ from \textit{prompt} $q$,
+        get rewards $r_1, \ldots, r_G$.
+        \item Use the group's \textit{average reward} as the baseline.
+    \end{itemize}
+    \begin{block}{Group-relative advantage}
+        $$
+        \hat{A}_i = \frac{r_i - \operatorname{mean}(r_1, \ldots, r_G)}{\operatorname{std}(r_1, \ldots, r_G)}
+        $$
+    \end{block}
+    \pause
+    \begin{itemize}
+        \item Subtracting the group mean $\propto$ subtracting the mean of the
+        \textit{other} completions, which doesn't depend on $o_i$: a valid baseline.
+        \item Dividing by the std isn't, as we'll see with Dr.\ GRPO.
+        \item Every token of $o_i$ gets the \textit{same} advantage $\hat{A}_i$.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}
+    \frametitle{A group, scored}
+    The reward function $R$ counts the number of periods \red{.} in the outcome.
+    \begin{center}
+    %\scriptsize
+    \renewcommand{\arraystretch}{1.25}
+    \begin{tabular}{l|c|c}
+        \textbf{completion $o_i$} & \textbf{$r_i$} & \textbf{$\hat{A}_i$} \\ \hline
+        \texttt{\textbf{This is} my favourite recipe for banana bread} & $0$ & \textcolor{red}{$-0.87$} \\
+        \texttt{\textbf{This is} a short story\red{.} It ends well\red{.}} & $2$ & \textcolor{red}{$-0.29$} \\
+        \texttt{\textbf{This is} Dr\red{.} J\red{.} R\red{.} Smith, Ph\red{.}D\red{.}, of the U\red{.}S\red{.} Navy\red{.}} & $8$ & \textcolor{blue}{$+1.44$} \\
+        \texttt{\textbf{This is} Python 3\red{.}11\red{.}4, released by the P\red{.}S\red{.}F\red{.}} & $5$ & \textcolor{blue}{$+0.58$} \\
+        \texttt{\textbf{This is} the best day of my life} & $0$ & \textcolor{red}{$-0.87$}
+    \end{tabular}
+    \end{center}
+    \small
+    \pause
+    \begin{itemize}
+        \item Better than the group: \blue{push every token up}. Worse: \red{push every token down}.
+        \item \textbf{Every reward the same?} Then every $\hat{A}_i = 0$, and the group doesn't contribute
+        to learning. Need signal for better/worse completions.
+        \pause
+        \item \textbf{Many prompts?} Normalise \textit{within} each prompt's group.
+        Otherwise we learn ``easy prompts are good'', which the policy can't act on.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}
+    \frametitle{The GRPO objective}
+    \begin{block}{GRPO joy (maximise)}
+        \begin{align*}
+        J^{GRPO}(\bth) &=
+        \underbrace{\hat{\Ex}_t\Big[\min\big(\rho_t(\bth)\,\hat{A}_t,\;
+        \text{clip}(\rho_t(\bth), 1-\eps, 1+\eps)\,\hat{A}_t\big)\Big]}_{\text{PPO's clipped joy}}
+        \;-\; \beta\, \underbrace{\hat{\Ex}_t\Big[D_{\mathrm{KL},t}\Big]}_{\text{KL penalty (new)}} \\
+        \rho_t(\bth) &= \frac{\pi_\bth(a_t|s_t)}{\piold(a_t|s_t)} \\
+        D_{\mathrm{KL},t} &= \KL\big(\pi_\bth(\cdot|s_t) \,\|\, \piref(\cdot|s_t)\big)
+    \end{align*}
+    \end{block}
+    where 
+    \begin{itemize}
+        \item $\hat{\Ex}_t$ averages over every generated token in the batch.
+        \item $\hat{A}_t = \hat{A}_i$ for every token $t$ of completion $o_i$.
+    \end{itemize}
+    \pause
+    \vspace{0.1cm}
+    % \begin{center}
+    % \small
+    % \renewcommand{\arraystretch}{1.15}
+    % \begin{tabular}{l|l|l}
+    %                    & \textbf{PPO} & \textbf{GRPO} \\ \hline
+    %     advantage      & critic + GAE, per step & group baseline, per sequence \\
+    %     clipping       & $\text{clip}(\rho_t)$ & same \\
+    %     regulariser    & entropy bonus & KL to the original model $\piref$ \\
+    %     extra network  & critic $V_\pth$ & frozen copy $\piref$
+    % \end{tabular}
+    % \end{center}
+\end{frame}
+
+% ============================================================
+\section{The KL penalty}
+
+\begin{frame}
+    \frametitle{Why a KL penalty?}
+    \begin{itemize}
+        \item In RLHF, $R$ is a \textbf{model} of human preferences: a proxy.
+        Optimise a proxy hard enough and it breaks.
+        \item The policy can find text that $R$ loves but no human would write.
+        \item So: maximise reward, but stay close to the pretrained model $\piref$.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Which direction? Forward vs reverse KL}
+    $$
+    \KL(P \,\|\, Q) = \sum_x P(x) \log \frac{P(x)}{Q(x)} = \Ex_{x \sim P}\Big[\log \frac{P(x)}{Q(x)}\Big]
+    $$
+    \begin{columns}[T]
+    \begin{column}{0.52\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{kl_diff}
+
+    {\tiny Red: a fixed $P$. Blue: the Gaussian $Q$ that minimises each KL.}
+    \end{column}
+    \begin{column}{0.46\linewidth}
+    \small
+    \textbf{Forward} $\KL(P\,\|\,Q)$ (left): blows up where $P > 0 = Q$,
+    so $Q$ covers \textit{all} of $P$. \textbf{Mode-covering}.
+
+    \vspace{0.15cm}
+    \textbf{Reverse} $\KL(Q\,\|\,P)$ (right): blows up where $Q > 0 = P$,
+    so $Q$ sits \textit{inside} $P$. \textbf{Mode-seeking}.
+    \end{column}
+    \end{columns}
+    \pause
+    \vspace{0.2cm}
+    \small
+    We use the \textbf{reverse} KL, $\KL(\pi_\bth \,\|\, \piref)$: $Q = \pi_\bth$ (what we train), $P = \piref$.
+    \begin{itemize}
+        \item Blows up where $\pi_\bth > 0$ but $\piref = 0$: don't do anything the base model wouldn't.
+        \item Fine for $\pi_\bth=0$ and $\piref>0$ does: we want that!
+        \item $\pi_\bth$ \textbf{concentrates} on part of what $\piref$ already does.
+    \end{itemize}
+\end{frame}
+
+% \begin{frame}
+%     \frametitle{The exact KL is expensive}
+%     Per position, sum over the vocabulary:
+%     $$
+%     \KL\big(\pi_\bth(\cdot|s_t) \,\|\, \piref(\cdot|s_t)\big)
+%     = \sum_{a \in \A} \pi_\bth(a|s_t) \log \frac{\pi_\bth(a|s_t)}{\piref(a|s_t)}
+%     $$
+%     \pause
+%     \begin{itemize}
+%         \item Needs $\piref$'s logprobs for \textit{every} token in the vocab, at every position.
+%         \item GPT-2: $128 \text{ samples} \times 30 \text{ tokens} \times 50\text{k vocab} \times 4\text{ bytes} \approx 740$ MiB, just to store it.
+%         \item Most of the mass is on a handful of tokens anyway.
+%     \end{itemize}
+%     \pause
+%     \vspace{0.2cm}
+%     KL is an expectation under $\pi_\bth$, and we \textit{already have samples} from (roughly) $\pi_\bth$:
+%     the tokens we generated. Estimate it from the \textbf{sampled token only}.
+%     Let
+%     $$
+%     \lr_t = \log \pi_\bth(a_t|s_t) - \log \piref(a_t|s_t).
+%     $$
+%     We train with $\widehat{D}_{\mathrm{KL},t} = \tfrac12 \lr_t^2$.
+% \end{frame}
+
+
+\begin{frame}
+    \frametitle{Where did the entropy bonus go?}
+    $$
+    \KL(\pi_\bth \,\|\, \piref)
+    = \underbrace{\sum_a \pi_\bth \log \pi_\bth}_{-H(\pi_\bth)}
+    \;\underbrace{- \sum_a \pi_\bth \log \piref}_{\text{reverse cross-entropy}}
+    $$
+    \pause
+    \begin{itemize}
+        \item Penalising the KL already \textbf{rewards entropy}.
+        \item And it pulls $\pi_\bth$ towards a pretrained model, which spreads its mass over
+        many plausible continuations.
+        \item Usually enough to stop collapse, without a separate bonus.
+        \item Couldn't do this for PPO as we had no reference policy to compare against.
+    \end{itemize}
+\end{frame}
+
+% ============================================================
+\section{Training}
+
+\begin{frame}
+    \frametitle{The GRPO training loop}
+    \textbf{Input:} prompt $q$, group size $G$, epochs $K$, learning rate $\alpha$
+
+    \textbf{Algorithm: repeat:}
+    \begin{enumerate}
+        \item \textbf{Rollout:} sample $G$ completions of the prompt from $\pi_\bth$.
+        Compute rewards and $\hat{A}_i$. For each generated token store
+        $$
+        \big(s_t,\ a_t,\ \log \piold(a_t|s_t),\ \log \piref(a_t|s_t),\ \hat{A}_t\big)
+        $$
+        where $s_t, a_t$ are just the token ids, and $\hat{A}_t = \hat{A}_i$ for every token of $o_i$.
+        \item \textbf{Learn:} for $K$ epochs:
+        \begin{itemize}
+            \item shuffle the $G$ completions into minibatches $\mathcal{B}$
+            \item for each $\mathcal{B}$: rerun $\pi_\bth$ to get $\log \pi_\bth(a_t|s_t)$, then
+            $\bth \leftarrow \bth + \alpha \nabla_\bth J^{GRPO}$, averaged over $\mathcal{B}$
+        \end{itemize}
+    \end{enumerate}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Behaviour of RLHF'd model}
+    \textbf{$\beta = 0$} (no KL penalty). Within 4 phases:
+    \begin{center}
+    \texttt{\small This is.........................................}
+    \end{center}
+    Model quickly learns to only emit \texttt{.} (Useful to test training loop!)
+    \pause
+    \vspace{0.3cm}
+
+    \textbf{$\beta > 0$}: the model has to launder periods into plausible text.
+    \begin{itemize}
+        \item \texttt{\small J. R. R. Tolkein recommends Python 2.7.12 over Python 3.1.4}
+        \item \texttt{\small This is a conversation between Dr. Fedora . . . . . .}
+    \end{itemize}
+    \pause
+    \vspace{0.2cm}
+    KL penalty can fail!
+    \begin{itemize}
+        \item The KL compares the two models \textit{on the same context}.
+        \item After \texttt{. . . .}, the base model also predicts another \texttt{.}
+        \item Only the first few tokens of the pattern pay the penalty.
+    \end{itemize}
+\end{frame}
+
+% ============================================================
+\section{LoRA}
+
+% \begin{frame}
+%     \frametitle{Full fine-tuning doesn't fit}
+%     AdamW in float32, per parameter:
+%     \begin{center}
+%     \begin{tabular}{lr}
+%         weight & 4 bytes \\
+%         gradient & 4 bytes \\
+%         Adam's two moments & 8 bytes \\ \hline
+%         \textbf{total} & \textbf{16 bytes}
+%     \end{tabular}
+%     \end{center}
+%     \pause
+%     For Qwen3-1.7B: $1.7\text{B} \times 16 \approx \red{27\text{ GB}}$, plus $\red{7\text{ GB}}$ for the frozen $\piref$.
+%     Before a single activation. A 24 GB GPU can't do it.
+%     \pause
+%     \vspace{0.3cm}
+
+%     \textbf{But RL barely changes the model.}
+%     \begin{itemize}
+%         \item A 0/1 reward gives at most $1$ bit per rollout.
+%         \item $100$ phases $\times\ 128$ rollouts $= 12{,}800$ bits $\approx 1.5$ KiB, total.
+%         \item We're nudging a pretrained model towards behaviour it mostly already has.
+%         Why pay to update every weight?
+%     \end{itemize}
+% \end{frame}
+
+\begin{frame}
+    \frametitle{Low-Rank Adaptation}
+    \begin{columns}
+    \begin{column}{0.58\linewidth}
+    Freeze $W_0 \in \mathbb{R}^{d_\text{in} \times d_\text{out}}$. Learn a \textbf{low-rank update}
+    with $r \ll d_\text{in}, d_\text{out}$:
+    \begin{block}{LoRA}
+        $$
+        h = x W_0 + x A B
+        $$
+    \end{block}
+    \pause
+    \begin{itemize}
+        \item Init $B=0$, model starts same as base
+        \item LoRA param. count $<1\%$ of full model
+        \item Compute $(xA)B$, never for full matrix $AB$
+        \item Can fuse the adapter into weights post-training: $W \leftarrow W + AB$.
+        \item Apply to every linear layer (except $W_E, W_U$).
+        \item Disable adaptor to recover $\piref$.
+    \end{itemize}
+    \end{column}
+    \begin{column}{0.4\linewidth}
+    \centering
+    \includegraphics[width=0.85\linewidth]{LoraDiagram}
+    \end{column}
+    \end{columns}
+\end{frame}
+
+% \begin{frame}
+%     \frametitle{What LoRA buys us}
+%     \begin{itemize}
+%         \item \textbf{Optimiser state only for $A, B$}. $W_0$ gets no gradient and no Adam moments.
+%         \pause
+%         \item \textbf{Gradients still flow \textit{through} $W_0$}:
+%         $\frac{\partial L}{\partial x} = \frac{\partial L}{\partial h} W_0^\top$ uses $W_0$'s value,
+%         never $\frac{\partial L}{\partial W_0}$. Still a full backward pass.
+%         \pause
+%         \item \textbf{The reference model is free}: switch the adapters off and you have $\piref$ back.
+%         No second copy.
+%     \end{itemize}
+%     \pause
+%     \begin{block}{Merging}
+%         After training, bake it in: $W \leftarrow W_0 + \frac{\alpha}{r} AB$. Same speed as the base model.
+%     \end{block}
+%     \begin{itemize}
+%         \item In bf16, $W_0 + \frac{\alpha}{r}AB$ rounds to $\sim$1 part in 256 of $W_0$.
+%         Our update is $<1\%$ of $W_0$: merging loses about a quarter of it.
+%         \item Servers with many adapters (vLLM, S-LoRA) don't merge at all.
+%     \end{itemize}
+%     \pause
+%     \vspace{0.1cm}
+%     \textbf{Which layers?} Paper: $W_Q, W_V$. Current practice: \textit{every} linear layer,
+%     attention \textit{and} MLP. For RL, even $r = 1$ can match full fine-tuning.
+% \end{frame}
+
+% ============================================================
+\section{RLVR}
+
+\begin{frame}
+    \frametitle{From preferences to verifiers}
+    \textbf{RLVR}: Reinforcement Learning from \textbf{Verifiable} Rewards.
+    \begin{itemize}
+        \item The reward is a \textbf{verifier} with access to ground truth:
+        a known answer, a calculator, unit tests, a proof checker.
+        \item Have the model think out loud (chain of thought), then reward based only on the final answer.
+
+    % \pause
+    % \vspace{0.2cm}
+    % \begin{center}
+    % \renewcommand{\arraystretch}{1.3}
+    % \begin{tabular}{l|l|l}
+    %      & \textbf{RLHF} & \textbf{RLVR} \\ \hline
+    %     reward & learned proxy for humans & checks the answer \\
+    %     reward hacking & a real worry & mostly no\textsuperscript{*} \\
+    %     KL to $\piref$ & essential & \textbf{dropped} \\
+    %     goal & change \textit{behaviour} & teach a \textit{capability}
+    % \end{tabular}
+    % \end{center}
+    \pause
+        \item If the model learns something it couldn't do before,
+        its successful rollouts \textit{must} be out of distribution for $\piref$.
+        Drop KL penalty.
+        % \item \textsuperscript{*}As long as the verifier doesn't have bugs
+    \end{itemize}
+\end{frame}
+
+\begin{frame}
+    \frametitle{The task: multiplication}
+    \begin{block}{Prompt}
+        \texttt{\small Compute 948 * 39. Reason step by step, then give the final answer as $\backslash$boxed\{N\}.}
+    \end{block}
+    \begin{itemize}
+        \item Trivial to verify, huge input space (no memorising), \textbf{tunable difficulty}.
+    %     \item Qwen3-0.6B-Base knows \textit{how} to multiply, but slips on big numbers.
+    \end{itemize}
+    % \begin{center}
+    % \small
+    % \renewcommand{\arraystretch}{1.2}
+    % \begin{tabular}{l|cccccc}
+    %     rung & 3$\times$2 & 4$\times$2 & 3$\times$3 & 4$\times$3 & 4$\times$4$^\dagger$ & 4$\times$4 \\ \hline
+    %     base pass@1 & 0.56 & 0.44 & 0.30 & 0.16 & 0.08 & 0.05
+    % \end{tabular}
+
+    % {\tiny $^\dagger$second operand $< 3000$. Two more rungs (4$\times$5, 5$\times$5) above these.}
+    % \end{center}
+    % \pause
+    \begin{columns}
+    \begin{column}{0.45\linewidth}
+    \begin{block}{Reward}
+        \vspace{-0.3cm}
+        $$
+        r_T = \begin{cases}
+            1 & \text{boxed answer correct} \\
+            0.1 & \text{boxed, but wrong} \\
+            0 & \text{no boxed integer}
+        \end{cases}
+        $$
+    \end{block}
+    \end{column}
+    \begin{column}{0.5\linewidth}
+    \begin{itemize}
+        \item The $0.1$ teaches the format fast.
+        \item Anything fancier (partial credit, ``close enough'') begs to be reward hacked.
+    \end{itemize}
+    \end{column}
+    \end{columns}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Dr.\ GRPO: drop the std}
+    GRPO divides each group's advantages by its std. For 0/1 rewards in a group of 19:
+    \vspace{0.2cm}
+    \begin{center}
+    \renewcommand{\arraystretch}{1.3}
+    \begin{tabular}{l|c|c}
+        group & std & effect of $/\text{std}$ \\ \hline
+        1 right, 18 wrong (too hard) & $0.23$ & \red{amplified $\times 4.4$} \\
+        18 right, 1 wrong (too easy) & $0.23$ & \red{amplified $\times 4.4$} \\
+        10 right, 9 wrong (just right) & $0.51$ & amplified $\times 2.0$
+    \end{tabular}
+    \end{center}
+    \pause
+    \begin{itemize}
+        \item Questions that are nearly always solved, or nearly always failed,
+        get the \textit{biggest} weight. The questions in the sweet spot get the least.
+        \item \textbf{Dr.\ GRPO} (``GRPO Done Right''): just $\hat{A}_i = r_i - \operatorname{mean}(r_1, \ldots, r_G)$.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Dr.\ GRPO: drop the length normalisation}
+    Completions now stop at the end-of-text token, so lengths $|o_i|$ differ.
+    $$
+    \frac{1}{G}\sum_{i=1}^G \red{\frac{1}{|o_i|}} \sum_{t=1}^{|o_i|} (\ldots)
+    \qquad \longrightarrow \qquad
+    \frac{1}{G}\sum_{i=1}^G \blue{\frac{1}{L_\text{max}}} \sum_{t=1}^{|o_i|} (\ldots)
+    $$
+    \pause
+    \begin{itemize}
+        \item Every token of $o_i$ has the same $\hat{A}_i$.
+        \item Divide by $\red{1/|o_i|}$, and each token is pushed by $\hat{A}_i / |o_i|$.
+        \item $\hat{A}_i > 0$: shorter correct answers get bigger push per token.
+        \item $\hat{A}_i < 0$: longer wrong answers get smaller penalty per token.
+        \item Dr.\ GRPO divides by a \blue{constant}: $L_\text{max}$ = the generation budget to avoid placing any optimization pressure on generation length.
+    \end{itemize}
+\end{frame}
+
+
+% \begin{frame}
+%     \frametitle{One step per rollout}
+%     RLVR trainer: sample $16$ problems $\times\ 8$ completions, take \textbf{one} optimiser step, discard.
+%     \pause
+%     \begin{itemize}
+%         \item The policy that sampled the batch \textit{is} the one we're updating: $\piold = \pi_\bth$.
+%         \item Pass $\texttt{old\_logprobs} = \texttt{logprobs.detach()}$:
+%         $\rho = 1$ in value, but $\nabla_\bth \rho = \nabla_\bth \log \pi_\bth$.
+%         (Plain \texttt{logprobs} would give $\rho \equiv 1$ and no gradient at all.)
+%         \item $\rho = 1$ is inside $[1-\eps, 1+\eps]$, so the clip never fires:
+%     \end{itemize}
+%     $$
+%     \nabla_\bth J = \frac{1}{G L_\text{max}} \sum_{i=1}^G \big(r_i - \bar{r}\big)
+%     \sum_t \nabla_\bth \log \pi_\bth(o_{i,t} \mid q, o_{i,<t})
+%     $$
+%     \textbf{Equivalent to VPG with a group-mean baseline!} \\
+%     \pause
+%     Why bother with (Dr.) GRPO? In general you may wish to go off-policy:
+%     \begin{itemize}
+%         \item several minibatch steps per rollout (as in our RLHF trainer: $4 \times 2 = 8$),
+%         \item reusing expensive long rollouts several times
+%     \end{itemize}
+% \end{frame}
+
+\begin{frame}
+    \frametitle{A dynamic curriculum}
+    A question with solve rate $p$: how much does one answer tell us?
+    \begin{columns}[c]
+    \begin{column}{0.4\linewidth}
+    \begin{itemize}
+        \item Max $1$ bit at $p = 0.5$.
+        \item $p = 0$ or $1$: 0 bits, learn nothing.
+    \end{itemize}
+    \end{column}
+    \begin{column}{0.58\linewidth}
+    \centering
+    \begin{tikzpicture}
+    \begin{axis}[
+        width=\linewidth, height=4.6cm,
+        xmin=0, xmax=1, ymin=0, ymax=1.1,
+        xlabel={solve rate $p$}, ylabel={bits},
+        xtick={0,0.5,1}, ytick={0.5,1},
+        tick label style={font=\scriptsize}, label style={font=\small},
+        xticklabel style={yshift=2pt}, yticklabel style={xshift=1pt},
+        xlabel style={yshift=6pt}, ylabel style={yshift=-12pt}]
+        \addplot[very thick, blue, domain=0.001:0.999, samples=100]
+            {-x*ln(x)/ln(2) - (1-x)*ln(1-x)/ln(2)};
+        \draw[dashed, gray] (axis cs:0.5,0) -- (axis cs:0.5,1);
+    \end{axis}
+    \end{tikzpicture}
+
+    \vspace{-0.1cm}
+    {\small $\mathcal{H}(p) = -p\log_2 p - (1-p)\log_2(1-p)$}
+    \end{column}
+    \end{columns}
+    \pause
+    \begin{itemize}
+    \item The model improves during training, so a fixed difficulty is too hard early and too easy late.
+    \item \textbf{Solution:} Dynamically adjust the difficulty of questions (if possible) to keep the solve rate around 50\%.
+    \end{itemize}
+\end{frame}
+
+% \begin{frame}
+%     \frametitle{Making it fit}
+%     \begin{itemize}
+%         \item RLHF: $128 \times 30 \times 50\text{k} \approx 0.2$B logits, $0.7$ GiB. Fine.
+%         \item RLVR: $128 \times {\sim}450 \times 152\text{k} \approx 9$B logits, ${\sim}33$ GiB in fp32. \red{Not fine.}
+%     \end{itemize}
+%     \pause
+%     \vspace{0.2cm}
+%     None of this changes the maths:
+%     \begin{itemize}
+%         \item \textbf{Gradient accumulation}: micro-batches of $4$ completions $\to$ ${\sim}1.2$ GiB of logits.
+%         One optimiser step at the end.
+%         \item \textbf{Skip zero-advantage rows}: groups where everyone got the same reward contribute exactly $0$.
+%         \item \textbf{Length-sorted micro-batches}: pad each only to its own longest completion.
+%         \item \textbf{vLLM} for sampling: ${\sim}2.5\times$ faster rollouts.
+%         \item \textbf{No reference pass}: no KL, so no $\log \piref$ at all.
+%     \end{itemize}
+% \end{frame}
+
+% ============================================================
+\section{Does RL teach anything new?}
+
+% \begin{frame}
+%     \frametitle{Results}
+%     40 steps, Qwen3-0.6B-Base + LoRA ($r = 16$, ${\sim}10$M trainable params):
+%     \begin{center}
+%     % colours match the pass@k figures (matplotlib's default blue / orange)
+%     \definecolor{mplblue}{HTML}{1F77B4}
+%     \definecolor{mplorange}{HTML}{FF7F0E}
+%     \begin{tikzpicture}
+%     \begin{axis}[
+%         ybar, bar width=10mm, width=0.72\linewidth, height=4.4cm,
+%         ymin=0, ymax=1, ytick={0,0.5,1}, ylabel={pass@1},
+%         symbolic x coords={4x3, 4x4}, xtick=data,
+%         xticklabels={4$\times$3, 4$\times$4}, enlarge x limits=0.5,
+%         nodes near coords, nodes near coords style={font=\scriptsize}, every node near coord/.append style={/pgf/number format/fixed, /pgf/number format/precision=2, /pgf/number format/fixed zerofill},
+%         legend style={font=\scriptsize, draw=none, fill=none, at={(0.5,1.03)}, anchor=south, legend columns=2, /tikz/every even column/.append style={column sep=4mm}}, legend cell align=left,
+%         tick label style={font=\scriptsize}, label style={font=\scriptsize},
+%         axis x line*=bottom, axis y line*=left]
+%         \addplot[fill=mplblue, draw=none] coordinates {(4x3, 0.15) (4x4, 0.03)};
+%         \addplot[fill=mplorange, draw=none] coordinates {(4x3, 0.71) (4x4, 0.50)};
+%         \legend{base, after RLVR}
+%     \end{axis}
+%     \end{tikzpicture}
+%     \end{center}
+%     \pause
+%     \vspace{0.2cm}
+%     \textbf{But:} did it learn to multiply, or just get better at something it could already (sometimes) do?
+%     \begin{itemize}
+%         \item \textbf{pass@$k$}: out of $k$ samples, does \textit{at least one} get it right?
+%         \item If the base model \textit{can} do it, just rarely, its pass@$k$ climbs with $k$.
+%         \item If it genuinely can't, its pass@$k$ stays near $0$.
+%     \end{itemize}
+% \end{frame}
+
+\begin{frame}
+    \frametitle{Before and after RLVR: one 4$\times$4 problem}
+    \providecommand{\nl}{\textcolor{gray}{$\hookleftarrow$}\allowbreak\ }
+    \centering
+    {\scriptsize \texttt{Compute 6305 * 3471. Reason step by step, then give the final answer as $\backslash$boxed\{N\}.}}
+
+    \begin{columns}[T]
+    \begin{column}{0.49\linewidth}
+    \centering \footnotesize \textbf{Base model}: boxes \red{92575} (wrong)
+    \begin{block}{}
+    \raggedright \tiny \setlength{\parskip}{0pt}\setlength{\abovedisplayskip}{1pt}\setlength{\belowdisplayskip}{1pt}\setlength{\abovedisplayshortskip}{0pt}\setlength{\belowdisplayshortskip}{1pt}
+    To compute $6305 \times 3471$, we can use a systematic approach to simplify the multiplication. Here's the step-by-step reasoning:\par
+    \par
+    \textbf{Step 1: Align the Numbers}\par
+    {\ttfamily \textbackslash{}begin\{array\}\{r\}\\ \textbackslash{}phantom\{1\}6305 \textbackslash{}\textbackslash{}\\ \textbackslash{}times 3471 \textbackslash{}\textbackslash{}\\ \textbackslash{}hline\\ \textbackslash{}end\{array\}\par}
+    \par
+    \textbf{Step 2: Multiply 6305 by Each Digit of 3471}\par
+    We'll break down the multiplication into steps.\par
+    \par
+    \textbf{Step 2.1: Multiply 6305 by 1 (the units digit of 3471)}\par
+    {\centering $6305 \times 1 = 6305$\par}
+    Write down 6305 below the line.\par
+    \par
+    \textbf{Step 2.2: Multiply 6305 by 7 (the tens digit)}\par
+    {\centering $6305 \times 7 = 44135$\par}
+    Write down 44135 below the line, shifted one position to the left.\par
+    \par
+    \textbf{Step 2.3: Multiply 6305 by 4 (the hundreds digit)}\par
+    {\centering $6305 \times 4 = 25220$\par}
+    Write down 25220 below the line, shifted two positions to the left.\par
+    \par
+    \textbf{Step 2.4: Multiply 6305 by 3 (the thousands digit)}\par
+    {\centering $6305 \times 3 = 18915$\par}
+    Write down 18915 below the line, shifted three positions to the left.\par
+    \par
+    \textbf{Step 3: Add the Products}\par
+    Now, add all the products together:\par
+    {\centering $6305 + \red{44135} + \red{25220} + \red{18915} = \red{92575}$\par}
+    \par
+    \textbf{Final Answer}\par
+    {\centering $\boxed{\red{92575}}$\par}
+    \end{block}
+    \end{column}
+    \begin{column}{0.49\linewidth}
+    \centering \footnotesize \textbf{After RLVR}: boxes \green{21884655} (correct)
+    \begin{block}{}
+    \raggedright \tiny \setlength{\parskip}{0pt}\setlength{\abovedisplayskip}{1pt}\setlength{\belowdisplayskip}{1pt}\setlength{\abovedisplayshortskip}{0pt}\setlength{\belowdisplayshortskip}{1pt}
+    To compute $6305 \times 3471$, we can use the distributive property to break down the multiplication:\par
+    \par
+    {\centering $6305 \times 3471 = 6305 \times (3400 + 71) = 6305 \times 3400 + 6305 \times 71$\par}
+    \par
+    First, calculate $6305 \times 3400$:\par
+    \par
+    {\centering $6305 \times 3400 = 6305 \times 3000 + 6305 \times 400$\\$= 18915000 + 2522000 = 21437000$\par}
+    \par
+    Next, calculate $6305 \times 71$:\par
+    \par
+    {\centering $6305 \times 71 = 6305 \times 70 + 6305 \times 1 = 441350 + 6305 = 447655$\par}
+    \par
+    Now, add the results:\par
+    \par
+    {\centering $21437000 + 447655 = 21884655$\par}
+    \par
+    So, the final answer is:\par
+    \par
+    {\centering $\boxed{21884655}$\par}
+    \end{block}
+    \end{column}
+    \end{columns}
+
+    \vspace{0.05cm}
+    \raggedright
+    \tiny
+    Sampled text rendered as a chat interface would (words, numbers, lines unchanged); mistakes in red. Qwen3-0.6B-Base $\pm$ RLVR LoRA, $T{=}1$, top-$k$ 50, top-$p$ 0.95.
+    \textbf{Base}: $0/8$ correct ($4$ never box an answer); this one adds its partial products \red{unshifted}, and gets even that sum wrong ($94575$). \textbf{RLVR}: $7/8$ correct, all $7$ the \textit{identical} completion.
+\end{frame}
+
+% \begin{frame}
+%     \frametitle{Elicitation or learning?}
+%     \centering
+%     \includegraphics[width=0.9\linewidth]{rlvr_passk}
+%     \pause
+%     \raggedright
+%     \small
+%     \begin{itemize}
+%         \item \textbf{4$\times$3}: RLVR leads at $k=1$, but plateaus at $0.94$.
+%         Base catches up at $k = 64$, and solves \textit{every} problem by $k = 256$.
+%         \item \textbf{4$\times$4}: the gap shrinks from $0.47$ at $k=1$ to $0.03$ at $k=256$.
+%         \item As Yue et al.\ (2025) found: RLVR mostly makes answers the base model \textit{could already reach}
+%         far more likely, and loses a few it used to find occasionally.
+%     \end{itemize}
+% \end{frame}
+
+% \begin{frame}
+%     \frametitle{Learning or Elicitation?}
+%     \centering
+%     \includegraphics[width=\linewidth, height=0.72\textheight, keepaspectratio]{rlvr_passk_4x4_16384}
+
+%     \vspace{0.2cm}
+%     \href{https://arxiv.org/abs/2504.13837}{Yue et. al.} shows that RLVR might just be eliciting capabilities the base model already had? Does sample efficiency count as learning?
+% \end{frame}
+
+\begin{frame}
+    \frametitle{RLVR reduces diversity of responses}
+    \centering
+    \includegraphics[width=\linewidth, height=0.6\textheight, keepaspectratio]{rlvr_answer_hist_4x4}
+
+    \vspace{0.3cm}
+    \raggedright
+    \small
+    \begin{itemize}
+        \item \textbf{Base}: answers spread over many orders of magnitude, with spikes at $\times 10$ and $\div 10$
+        (a digit dropped or added).
+        \item \textbf{RL}: answers pile up at the exact value, and the misses are mostly close to it.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}
+    \frametitle{What makes a good RLVR task?}
+    \begin{itemize}
+        \item \textbf{The base model must sometimes succeed}: at least once per group, or there's nothing to reinforce.
+        \begin{itemize}
+            \item Too hard? Tune the difficulty (as we did), or give partial credit (and watch it get hacked).
+        \end{itemize}
+        \pause
+        \item \textbf{Spend time on the prompt.} A base model just continues the document.
+        Here, a trailing newline on the prompt took 3$\times$2 pass@1 from $0.50$ to $0.56$.
+        \pause
+        \item \textbf{Keep the reward simple.} Optimisation pressure can and will find every loophole.
+        \pause
+        \item \textbf{Can't write a verifier?} An LLM judge with a rubric works, but now you can fool the judge.
+        You're back to RLHF.
+    \end{itemize}
+\end{frame}
+
+% ============================================================
+% \section{Summary}
+
+% \begin{frame}
+%     \frametitle{RLHF and RLVR in one slide}
+%     \begin{center}
+%     \small
+%     \renewcommand{\arraystretch}{1.35}
+%     \begin{tabular}{l|l|l|l}
+%          & \textbf{PPO} & \textbf{GRPO (RLHF)} & \textbf{Dr.\ GRPO (RLVR)} \\ \hline
+%         advantage & critic + GAE & $(r_i - \bar{r}) / \text{std}$ & $r_i - \bar{r}$ \\
+%         token weighting & - & $1/|o_i|$ & $1/L_\text{max}$ \\
+%         regulariser & $\mathcal{H}(\pi_\bth)$ & $\KL(\pi_\bth \| \piref)$ & - \\
+%         reward & environment & reward model & verifier
+%     \end{tabular}
+%     \end{center}
+%     \pause
+%     \begin{itemize}
+%         \item \textbf{GRPO}: replace the critic with a group of samples from the same prompt.
+%         \item \textbf{KL penalty}: stay close to the model you started from; estimate it from sampled tokens,
+%         and pick the estimator by its \textit{gradient}.
+%         \item \textbf{LoRA}: train a low-rank update; switch it off and get the reference model back for free.
+%         \item \textbf{RLVR}: a checker for a reward, no KL, and a curriculum that keeps questions at a $50\%$ solve rate.
+%     \end{itemize}
+% \end{frame}
+
+\end{document}
