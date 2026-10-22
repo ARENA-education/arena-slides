@@ -232,7 +232,7 @@
     \end{enumerate}
     \pause
     \vspace{0.1cm}
-    Far fewer simulations needed: the prior focuses the search only to promising moves, 
+    Far fewer simulations needed: the prior focuses the search on promising moves, 
     and the critic replaces random rollouts.
 \end{frame}
 
@@ -418,16 +418,18 @@
     \small
     \pause
     \begin{itemize}
-        \item \textbf{Expand:} walk down the tree selecting PUCT moves until leaf node hit.
-        \item \textbf{Evaluate:} Generate a child node. Cache in the node:
+        \item \textbf{Select:} walk down the tree taking the PUCT move until reaching a leaf.
+        \item \textbf{Expand:} add the new child node.
+        \item \textbf{Evaluate:} one network call on the leaf. Cache in the node:
         \begin{itemize}
             \small
             \item \blue{critic} $v_\pth(\text{leaf})$ is the value to back up, for the \textbf{leaf's mover};
-            \item \red{actor} give the prior $p_\bth(\cdot|\text{leaf})$.
+            \item \red{actor} gives the prior $p_\bth(\cdot|\text{leaf})$.
         \end{itemize}
+        \item \textbf{Backup:} walk back to the root, flipping the sign of $v$ at each step.
         \pause
-        \item \textbf{Terminal node:} Score $r_T \in \{-1, 0, +1\}$, and flip
-        as it is now the losing players turn.
+        \item \textbf{Terminal node:} the previous move ended the game with $r_T \in \{+1, 0\}$,
+        so the player now to move has lost or drawn: back up $v = -r_T$.
     \end{itemize}
 \end{frame}
 
@@ -516,7 +518,7 @@
         % \item Give MCTS a \textit{dummy} network ($v = 0$, uniform prior) and a win-in-one position.
         % With 32 simulations it finds the winning column.
         % \pause
-        \item Can take a already trained network, and increase the number of sims to improve performance
+        \item Can take an already-trained network, and increase the number of sims to improve performance
         (test-time compute.)
     \end{itemize}
     \pause
@@ -591,7 +593,7 @@
         }
         \node[font=\scriptsize, anchor=south west, align=left] at ($(z4.north east)+(0.1,0.1)$) {$r_4 = +1$:\\red won};
         \draw[dashed, thick] (4.5*\dx, 0.6) -- (4.5*\dx, -1.4);
-        \node[font=\scriptsize, gray] at (6*\dx, -1.6) {game unfinished: dropped};
+        \node[font=\scriptsize, gray] at (6*\dx, -1.6) {next game, unfinished: dropped};
     \end{tikzpicture}
     \end{center}
 \end{frame}
@@ -713,7 +715,7 @@
             \item play $a_t \sim \pi_t$, and remember $(s_t, \pi_t)$.
         \end{itemize}
         \vspace{0.1cm}
-        \item \textbf{Label.} At game end, labe each $s_t$ with outcome $z_t$ for the mover at ply $t$.
+        \item \textbf{Label.} At game end, label each $s_t$ with outcome $z_t$ for the mover at ply $t$.
         \vspace{0.1cm}
         \item \textbf{Learn.} Train on the recent $(s, \pi, z)$ examples by minimising 
         $$
