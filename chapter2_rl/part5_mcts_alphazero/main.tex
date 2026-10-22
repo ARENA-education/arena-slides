@@ -8,8 +8,22 @@
 % Deck-local macros (everything else this deck needs is in arena_beamer.sty).
 \newcommand{\green}[1]{\textcolor{green!50!black}{#1}}
 \newcommand{\UCB}{\text{UCB}}
+\newcommand{\PUCT}{\text{PUCT}}
+\newcommand{\nsims}{n_{\text{sim}}}
+\definecolor{cfred}{RGB}{214,39,40}
+\definecolor{cfyellow}{RGB}{244,208,63}
+\definecolor{cfblue}{RGB}{31,111,178}
 
-
+% A small Connect-4 board. #1 = scale, #2 = red discs, #3 = yellow discs,
+% each a list of col/row pairs (col 0-6 from the left, row 0-5 from the bottom).
+\newcommand{\cfour}[3][0.3]{%
+    \begin{tikzpicture}[scale=#1]
+        \fill[cfblue, rounded corners=1pt] (-0.55,-0.55) rectangle (6.55,5.55);
+        \foreach \x in {0,...,6} \foreach \y in {0,...,5} \fill[white] (\x,\y) circle (0.38);
+        \foreach \x/\y in {#2} \fill[cfred] (\x,\y) circle (0.38);
+        \foreach \x/\y in {#3} \fill[cfyellow] (\x,\y) circle (0.38);
+    \end{tikzpicture}%
+}
 
 \begin{document}
 
@@ -19,960 +33,940 @@
 \title[{[2.5] MCTS \& AlphaZero}]
 {{[2.5] Monte Carlo Tree Search and AlphaZero}}
 
- 
-\author[David Quarel] % (optional, for multiple authors)
+\author[David Quarel]
 {David Quarel}
- 
-\institute[ARENA] % (optional)
+
+\institute[ARENA]
 {
   ARENA
 }
- 
-\date[\today] % (optional)
+
+\date[\today]
 {\today}
- 
+
 \frame{\titlepage}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%w
-% PART 1: MONTE CARLO TREE SEARCH
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-\section{Monte Carlo Tree Search}
 
 \begin{frame}
-	\frametitle{Assumptions}
-	
-	We consider \textbf{two-player zero-sum games}:
-	
-	\vspace{0.2cm}
-	
-	\begin{itemize}
-		\item \textbf{Two players:} Taking turns (e.g., White/Black)
-		\item \textbf{Zero-sum:} One player's gain = other's loss
-		\item \textbf{Deterministic:} No randomness in transitions
-		\item \textbf{Perfect information:} Both players see full state
-		\item \textbf{Known rules:} Player knows the game dynamics
-		\item \textbf{Simulator access:} Can search/simulate future states
-	\end{itemize}
-	
-	\vspace{0.3cm}
-	
-	\textbf{Payoffs:} $z \in \{+1, 0, -1\}$ (win / draw / loss)
-	
-	\textbf{No discounting:} $\gamma = 1$ (only final outcome matters)
-	
-	\vspace{0.3cm}
-	
-	\small
-	Examples: Chess, Go, Checkers, Tic-Tac-Toe, Connect Four
+    \frametitle{Today}
+    \textbf{Goal:} an agent that learns strong Connect 4 \textit{from self-play alone},
+    in a few minutes on one GPU.
+
+    \vspace{0.3cm}
+    \begin{enumerate}
+        \setcounter{enumi}{-1}
+        \item \textbf{Theory:} MCTS, and how AlphaZero turns it into a learning algorithm
+        \item \textbf{Environment \& network:} vectorised Connect 4, a two-headed ResNet
+        \item \textbf{Single-game MCTS:} select, expand, evaluate, backup on an explicit tree
+        \item \textbf{Simulating vectorised MCTS:} batching the network across many games
+        \item \textbf{Self-play \& training:} value targets, the AlphaZero loss, the training loop
+        \item[\(\star\)] \textbf{Bonus:} fully vectorised MCTS on the GPU, symmetry augmentation,
+        Elo vs search budget
+    \end{enumerate}
 \end{frame}
-
-
-\begin{frame}
-	\frametitle{Classical Approach: Minimax}
-	
-	\begin{columns}
-	\begin{column}{0.45\textwidth}
-		\includegraphics[width=\textwidth]{img/minimax.png}
-	\end{column}
-	\begin{column}{0.55\textwidth}
-		\textbf{Minimax:} Assume opponent plays optimally
-		
-		\vspace{0.3cm}
-		
-		\begin{itemize}
-			\item MAX nodes: pick child with highest value
-			\item MIN nodes: pick child with lowest value
-			\item Recursively evaluate to leaves
-		\end{itemize}
-		
-		\vspace{0.3cm}
-		
-		\textbf{Alpha-beta pruning:} Skip branches that can't affect result
-	\end{column}
-	\end{columns}
-	
-\end{frame}
-
-
-\begin{frame}
-	\frametitle{Motivation: Why MCTS?}
-	
-\begin{itemize}
-	\item Minimax + alpha-beta works for Chess ($\approx 35$ moves/position)
-	\item Fails for Go ($\approx 250$ moves/position!)
-	\begin{itemize}
-		\item Branching factor too large
-		\item Hard to write evaluation function for non-terminal states
-	\end{itemize}
-\end{itemize}
-
-\vspace{0.5cm}
-
-\textbf{MCTS Idea:} Don't search exhaustively---\textit{sample} to estimate values.
-
-\vspace{0.3cm}
-
-Build the tree \textit{asymmetrically}, focusing on promising moves.
-\end{frame}
-
-\begin{frame}
-	\frametitle{MCTS: The Big Picture}
-	
-	Build search tree incrementally, guided by simulation results.
-	
-	\vspace{0.5cm}
-	
-	\textbf{Four phases} (repeated many times):
-	\begin{enumerate}
-		\item \textbf{Selection} --- Traverse the tree to a leaf node, guided by heuristic
-		\item \textbf{Expansion} --- Add child node(s)
-		\item \textbf{Simulation} --- Random rollout to terminal state
-		\item \textbf{Backpropagation} --- Update statistics along path
-	\end{enumerate}
-	
-	\vspace{0.5cm}
-	
-	\textbf{Output:} Action with highest visit count from root.
-\end{frame}
-
-
-\begin{frame}
-	\frametitle{MCTS: Four Phases}
-	
-	\begin{center}
-		\includegraphics[width=0.95\textwidth]{img/ch25-mcts.png}
-	\end{center}
-	
-	\vspace{0.3cm}
-	\small
-	\textbf{Selection} $\to$ \textbf{Expansion} $\to$ \textbf{Simulation} $\to$ \textbf{Backpropagation}
-	
-\end{frame}
-
-
-\begin{frame}
-	\frametitle{Phase 1: Selection (UCT)}
-	
-	Select child nodes from root to leaf. Balance \textit{exploitation} vs \textit{exploration}.
-	
-	\begin{block}{UCB1 Formula}
-	$$
-	\UCB(s, a) = \underbrace{\hat{Q}(s, a)}_{\text{exploit}} + 
-	\underbrace{c \sqrt{\frac{\ln N(s)}{N(s, a)}}}_{\text{explore}}
-	$$
-	\end{block}
-	
-	\begin{itemize}
-		\item $\hat{Q}(s, a)$ = average reward for action $a$ in state $s$
-		\item $N(s)$ = total visits to state $s$
-		\item $N(s, a)$ = visits to state-action pair $s,a$
-		\item \textbf{magic number} $c = \sqrt{2}$ typically
-	\end{itemize}
-	
-	\vspace{0.3cm}
-	\small
-	\textbf{Theorem:} UCT converges to minimax as simulations $\to \infty$.
-\end{frame}
-
-
-\begin{frame}
-	\frametitle{UCB Intuition}
-	
-	$$
-	\UCB(s, a) = \underbrace{\hat{Q}(s, a)}_{\text{exploit}} + 
-	\underbrace{c \sqrt{\frac{\ln N(s)}{N(s, a)}}}_{\text{explore}}
-	$$
-	
-	\vspace{0.3cm}
-	
-	\textbf{Why this formula?}
-	
-	\begin{itemize}
-		\item Estimation error of $\hat{Q}(s,a)$ is $\propto \frac{1}{\sqrt{N(s,a)}}$
-		\item Add bonus proportional to uncertainty $\Rightarrow$ explore high-variance actions
-		\item $\ln N(s)$ in numerator ensures every action tried infinitely often
-	\end{itemize}
-	
-	\vspace{0.3cm}
-	
-	\textbf{Behavior:}
-	\begin{itemize}
-		\item Low $N(s,a)$: Large bonus $\Rightarrow$ explore
-		\item High $N(s,a)$: Small bonus $\Rightarrow$ exploit $\hat{Q}$
-		\item $\ln$ grows slowly, so exploitation eventually dominates
-	\end{itemize}
-\end{frame}
-
-
-\begin{frame}
-	\frametitle{Phases 2-4: Expansion, Simulation, Backup}
-	
-	\textbf{Expansion:} Add one child node (untried action) to the leaf.
-	
-	\vspace{0.4cm}
-	
-	\textbf{Simulation (Rollout):} Play randomly to terminal state $\Rightarrow$ reward $z \in \{-1, 0, +1\}$
-	
-	\vspace{0.4cm}
-	
-	\textbf{Backpropagation:} Update all nodes on the path:
-	\begin{align*}
-		N(s) &\leftarrow N(s) + 1 \\
-		W(s) &\leftarrow W(s) + z \\
-		\hat{Q}(s) &= W(s) / N(s)
-	\end{align*}
-	
-	\vspace{0.3cm}
-	\small
-	\textbf{Note:} In two-player games, negate $z$ for opponent's nodes.
-\end{frame}
-
-
-\begin{frame}
-	\frametitle{MCTS: Pseudocode}
-	
-	\begin{algorithmic}[1]
-		\Function{MCTS}{$s_0$, num\_simulations}
-			\State Create root node with state $s_0$
-			\For{$i = 1$ to num\_simulations}
-				\State $v_l \gets$ \Call{TreePolicy}{root} \Comment{Select + Expand}
-				\State $z \gets$ \Call{Rollout}{$s(v_l)$} \Comment{Simulate}
-				\State \Call{Backup}{$v_l$, $z$} \Comment{Backprop}
-			\EndFor
-			\State \Return $\argmax_a N(s_0, a)$
-		\EndFunction
-	\end{algorithmic}
-	
-	\vspace{0.5cm}
-	
-	\small
-	\textbf{TreePolicy:} UCB selection $\to$ expand leaf. \quad
-	\textbf{Rollout:} Random play to terminal.
-\end{frame}
-
-
-\begin{frame}
-	\frametitle{MCTS: Properties}
-	
-	\textbf{Advantages:}
-	\begin{itemize}
-		\item \textbf{Anytime:} More iterations = better results
-		\item \textbf{Aheuristic:} No hand-crafted evaluation needed
-		\item \textbf{Asymmetric:} Focuses on promising branches
-		\item \textbf{Parallelizable:} Multiple simulations concurrently
-	\end{itemize}
-	
-	\vspace{0.5cm}
-	
-	\textbf{Limitations:}
-	\begin{itemize}
-		\item Random rollouts can be weak
-		\item Need a better evaluation function for non-terminal states
-	\end{itemize}
-\end{frame}
-
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% PARALLELIZATION
+\section{Planning with a simulator}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-\subsection{Parallelization}
-
 \begin{frame}
-	\frametitle{MCTS Parallelization}
-	
-	MCTS is naturally parallelizable---but \textit{how} matters!
-	
-	\vspace{0.5cm}
-	
-	\textbf{Three main strategies:}
-	
-	\begin{enumerate}
-		\item \textbf{Leaf Parallelization}
-		\item \textbf{Root Parallelization}
-		\item \textbf{Tree Parallelization}
-	\end{enumerate}
-	
-	\vspace{0.5cm}
-	
-	Trade-off: \textit{Implementation complexity} vs \textit{Speedup efficiency}
+    \frametitle{A new setting: we know the rules}
+    \begin{columns}
+    \begin{column}{0.62\linewidth}
+    So far (DQN, VPG, PPO) the agent had to learn the world from experience.
+    \textbf{Model-free.}
+
+    \vspace{0.3cm}
+    For a board game we \textbf{have the simulator}. We can try a move, look at the result,
+    and take it back, before playing for real. \textbf{Model-based: plan, then act.}
+
+    \vspace{0.3cm}
+    Today: \textbf{Connect 4}
+    \begin{itemize}
+        \item Two players, alternating turns, zero-sum
+        \item Deterministic, perfect information
+        \item Outcome $z \in \{+1, 0, -1\}$ (win / draw / loss), no discounting
+        \item 7 columns, at most 42 plies (one \emph{ply} = one player's move)
+    \end{itemize}
+    \end{column}
+    \begin{column}{0.36\linewidth}
+    \centering
+    \cfour[0.36]{3/0, 2/0, 3/2, 4/1}{3/1, 4/0, 2/1}
+
+    \vspace{0.3cm}
+    \small
+    Connect 4 is \textbf{solved}: a perfect solver gives the optimal move from any
+    position. A free ground truth to grade our agent against.
+    \end{column}
+    \end{columns}
 \end{frame}
 
 
 \begin{frame}
-	\frametitle{Leaf Parallelization}
-	
-	\begin{columns}
-	\begin{column}{0.5\textwidth}
-	\begin{center}
-	\begin{tikzpicture}[
-		every node/.style={circle, draw, minimum size=10mm, font=\normalsize},
-		scale=1.0, transform shape
-	]
-		\node[fill=blue!20] (root) at (0,0) {$s_0$};
-		\node (mid) at (0,-1.5) {$s_1$};
-		\node[fill=green!20] (leaf) at (0,-3) {$s_L$};
-		\draw[->, thick] (root) -- (mid);
-		\draw[->, thick] (mid) -- (leaf);
-		
-		% Multiple rollouts from leaf with worker labels
-		\node[rectangle, draw, fill=red!30, minimum size=8mm] (r1) at (-2.2,-5) {$z_1$};
-		\node[rectangle, draw, fill=orange!30, minimum size=8mm] (r2) at (-0.7,-5) {$z_2$};
-		\node[rectangle, draw, fill=yellow!30, minimum size=8mm] (r3) at (0.7,-5) {$z_3$};
-		\node[rectangle, draw, fill=cyan!30, minimum size=8mm] (r4) at (2.2,-5) {$z_4$};
-		
-		\draw[->, dashed, red, thick] (leaf) -- (r1);
-		\draw[->, dashed, orange, thick] (leaf) -- (r2);
-		\draw[->, dashed, yellow!70!black, thick] (leaf) -- (r3);
-		\draw[->, dashed, cyan!70!black, thick] (leaf) -- (r4);
-		
-		% Worker labels at 45 degree angle
-		\node[draw=none, font=\scriptsize, red, rotate=-45] at (-2.2,-5.9) {Worker 1};
-		\node[draw=none, font=\scriptsize, orange, rotate=-45] at (-0.7,-5.9) {Worker 2};
-		\node[draw=none, font=\scriptsize, yellow!70!black, rotate=-45] at (0.7,-5.9) {Worker 3};
-		\node[draw=none, font=\scriptsize, cyan!70!black, rotate=-45] at (2.2,-5.9) {Worker 4};
-	\end{tikzpicture}
-	\end{center}
-	\end{column}
-	
-	\begin{column}{0.5\textwidth}
-		\textbf{Idea:} Multiple workers run rollouts from the same leaf node in parallel
-		
-		\vspace{0.5cm}
-		
-		\green{\checkmark} Simple to implement
-		
-		\green{\checkmark} No synchronization needed
-		
-		\vspace{0.3cm}
-		
-		\red{$\times$} Limited speedup
-		
-		\red{$\times$} Workers idle during selection
-		
-		\red{$\times$} All explore same branch
-	\end{column}
-	\end{columns}
+    \frametitle{Why not just search everything?}
+    \begin{center}
+        \includegraphics[width=0.55\linewidth]{img/minimax.png}
+    \end{center}
+    \textbf{Minimax:} expand every move to the end of the game, then back the values up.
+    My best move is the one where the opponent's best reply is worst for me.
+
+    \pause
+    \vspace{0.2cm}
+    \textbf{Problem:} the tree is huge. Connect 4 has about $4.5 \times 10^{12}$ positions;
+    Go has more than atoms in the universe. We also can't write a good
+    evaluation function for a mid-game position by hand.
+
+    \pause
+    \vspace{0.2cm}
+    \textbf{Monte Carlo Tree Search:} don't search exhaustively. \textit{Sample}.
+    Grow the tree \textbf{asymmetrically}, spending simulations on the moves that look promising.
 \end{frame}
 
 
 \begin{frame}
-	\frametitle{Root Parallelization}
-	
-	\textbf{Each worker builds independent tree} --- merge results at the end
-	
-	\vspace{0.2cm}
-	
-	\begin{center}
-	\begin{tikzpicture}[
-		every node/.style={circle, draw, minimum size=7mm, font=\footnotesize},
-		scale=0.9, transform shape
-	]
-		% Tree 1 (Red)
-		\begin{scope}[xshift=-4cm]
-			\node[fill=red!20] (r1) at (0,0) {$s_0$};
-			\node[fill=red!10] (c1a) at (-0.8,-1) {};
-			\node[fill=red!10] (c1b) at (0.8,-1) {};
-			\node[fill=red!10] (c1c) at (-1.2,-2) {};
-			\node[fill=red!10] (c1d) at (-0.4,-2) {};
-			\node[fill=red!10] (c1e) at (0.4,-2) {};
-			\draw[->, red] (r1) -- (c1a);
-			\draw[->, red] (r1) -- (c1b);
-			\draw[->, red] (c1a) -- (c1c);
-			\draw[->, red] (c1a) -- (c1d);
-			\draw[->, red] (c1b) -- (c1e);
-			\node[draw=none, red, font=\normalsize] at (0,-2.8) {\textbf{Worker 1}};
-		\end{scope}
-		
-		% Tree 2 (Green)
-		\begin{scope}[xshift=0cm]
-			\node[fill=green!20] (r2) at (0,0) {$s_0$};
-			\node[fill=green!10] (c2a) at (-0.8,-1) {};
-			\node[fill=green!10] (c2b) at (0.8,-1) {};
-			\node[fill=green!10] (c2c) at (0,-2) {};
-			\node[fill=green!10] (c2d) at (1.2,-2) {};
-			\draw[->, green!50!black] (r2) -- (c2a);
-			\draw[->, green!50!black] (r2) -- (c2b);
-			\draw[->, green!50!black] (c2b) -- (c2c);
-			\draw[->, green!50!black] (c2b) -- (c2d);
-			\node[draw=none, green!50!black, font=\normalsize] at (0,-2.8) {\textbf{Worker 2}};
-		\end{scope}
-		
-		% Tree 3 (Blue)
-		\begin{scope}[xshift=4cm]
-			\node[fill=blue!20] (r3) at (0,0) {$s_0$};
-			\node[fill=blue!10] (c3a) at (-0.8,-1) {};
-			\node[fill=blue!10] (c3b) at (0.8,-1) {};
-			\node[fill=blue!10] (c3c) at (-0.4,-2) {};
-			\node[fill=blue!10] (c3d) at (0.4,-2) {};
-			\node[fill=blue!10] (c3e) at (1.2,-2) {};
-			\draw[->, blue] (r3) -- (c3a);
-			\draw[->, blue] (r3) -- (c3b);
-			\draw[->, blue] (c3a) -- (c3c);
-			\draw[->, blue] (c3b) -- (c3d);
-			\draw[->, blue] (c3b) -- (c3e);
-			\node[draw=none, blue, font=\normalsize] at (0,-2.8) {\textbf{Worker 3}};
-		\end{scope}
-		
-		% Arrows down to merge
-		\draw[->, thick, red] (-4,-3.2) -- (-1.5,-4);
-		\draw[->, thick, green!50!black] (0,-3.2) -- (0,-4);
-		\draw[->, thick, blue] (4,-3.2) -- (1.5,-4);
-		
-		% Merge box
-		\node[rectangle, draw, fill=yellow!20, minimum width=5cm, minimum height=0.6cm, font=\normalsize] (buffer) at (0,-4.5) {Aggregate Statistics / Replay Buffer};
-	\end{tikzpicture}
-	\end{center}
-	
-	\vspace{0.1cm}
-	
-	\green{\checkmark} No synchronization \quad
-	\green{\checkmark} Scales to clusters \quad
-	\red{$\times$} Duplicated work across trees
+    \frametitle{Vanilla MCTS}
+    \begin{center}
+        \includegraphics[width=0.5\textwidth]{img/ch25-mcts.png}
+    \end{center}
+    \vspace{-0.2cm}
+    Repeat many times:
+    \begin{enumerate}
+        \item \textbf{Select:} from the root, follow a \textit{tree policy} down to a leaf.
+        \item \textbf{Expand:} add a new child node.
+        \item \textbf{Simulate:} play \textit{random} moves to the end of the game.
+        \item \textbf{Backup:} add the result to the visit counts $N$ and value sums $W$ on the path.
+    \end{enumerate}
+    Then play the \textbf{most-visited} root move.
 \end{frame}
 
 
 \begin{frame}
-	\frametitle{Tree Parallelization}
-	
-	\textbf{Multiple workers share one tree} --- different branches simultaneously
-	
-	\vspace{0.2cm}
-	
-	\begin{center}
-	\begin{tikzpicture}[
-		every node/.style={circle, draw, minimum size=8mm, font=\small},
-		scale=0.85, transform shape
-	]
-		% Root
-		\node[fill=gray!20] (root) at (0,0) {$s_0$};
-		
-		% Level 1
-		\node[fill=red!30] (a) at (-3,-1.3) {$s_1$};
-		\node (b) at (0,-1.3) {$s_2$};
-		\node[fill=blue!30] (c) at (3,-1.3) {$s_3$};
-		
-		% Level 2
-		\node[fill=red!30] (a1) at (-4,-2.6) {$s_4$};
-		\node (a2) at (-2,-2.6) {$s_5$};
-		\node[fill=green!30] (b1) at (-0.7,-2.6) {$s_6$};
-		\node (b2) at (0.7,-2.6) {$s_7$};
-		\node (c1) at (2,-2.6) {$s_8$};
-		\node[fill=blue!30] (c2) at (4,-2.6) {$s_9$};
-		
-		% Level 3 (leaves for some workers)
-		\node[fill=red!30] (a1l) at (-4,-3.9) {};
-		\node[fill=green!30] (b1l) at (-0.7,-3.9) {};
-		\node[fill=blue!30] (c2l) at (4,-3.9) {};
-		
-		% Edges
-		\draw[->] (root) -- (a);
-		\draw[->] (root) -- (b);
-		\draw[->] (root) -- (c);
-		\draw[->, red, thick] (a) -- (a1);
-		\draw[->] (a) -- (a2);
-		\draw[->, green!50!black, thick] (b) -- (b1);
-		\draw[->] (b) -- (b2);
-		\draw[->] (c) -- (c1);
-		\draw[->, blue, thick] (c) -- (c2);
-		\draw[->, red, thick] (a1) -- (a1l);
-		\draw[->, green!50!black, thick] (b1) -- (b1l);
-		\draw[->, blue, thick] (c2) -- (c2l);
-		
-		% Worker labels
-		\node[draw=none, red, font=\footnotesize] at (-4,-4.5) {Worker 1};
-		\node[draw=none, green!50!black, font=\footnotesize] at (-0.7,-4.5) {Worker 2};
-		\node[draw=none, blue, font=\footnotesize] at (4,-4.5) {Worker 3};
-	\end{tikzpicture}
-	\end{center}
-	
-	\vspace{0.1cm}
-	
-	\begin{columns}
-		\begin{column}{0.5\textwidth}
-			\green{\checkmark} No duplicated work---best compute efficiency
-		\end{column}
-		\begin{column}{0.5\textwidth}
-			\red{$\times$} Requires synchronization (locks/atomics)
-		\end{column}
-	\end{columns}
+    \frametitle{The classic tree policy: UCB / UCT}
+    Balance \textit{exploitation} (moves that did well) vs \textit{exploration}
+    (moves we know little about):
+    \begin{block}{UCB1 applied to trees (UCT)}
+    $$
+    \UCB(s, a) = \underbrace{Q(s, a)}_{\text{exploit}} +
+    \underbrace{c \sqrt{\frac{\ln N(s)}{N(s, a)}}}_{\text{explore}}
+    $$
+    \end{block}
+    \begin{itemize}
+        \item $Q(s,a)$: mean outcome of $a$ so far; \; $N(s) = \sum_{a'} N(s, a')$
+        \item The error of $Q(s,a)$ shrinks like $1/\sqrt{N(s,a)}$, so the bonus tracks the uncertainty
+        \item $\ln N(s)$ grows slowly: every move is tried infinitely often, but exploitation
+        eventually dominates. UCT converges to minimax as simulations $\to \infty$
+    \end{itemize}
+    \pause
+    \textbf{What's missing?} Random rollouts are a noisy, weak value estimate; every move starts
+    out equally plausible; and nothing is \textbf{learned} between searches.
 \end{frame}
-
-
-\begin{frame}
-	\frametitle{Tree Parallelization: Synchronization}
-	
-	\textbf{Problem:} Multiple threads read/write $N(s), W(s)$ concurrently
-	
-	\vspace{0.5cm}
-	
-	\textbf{Option 1: Mutex / Locks}
-	\begin{itemize}
-		\item Lock node before read/write, unlock after
-		\item Simple but high contention at popular nodes (root!)
-	\end{itemize}
-	
-	\vspace{0.3cm}
-	
-	\textbf{Option 2: Atomic Operations}
-	\begin{itemize}
-		\item Use atomic increment: \texttt{atomic\_fetch\_add(\&N, 1)}
-		\item Lock-free, but limited to simple operations
-	\end{itemize}
-	
-	\vspace{0.3cm}
-	
-	\textbf{Option 3: Lock-Free with Virtual Loss}
-	\begin{itemize}
-		\item Atomically add virtual loss during selection
-		\item No locks needed---threads naturally spread out
-		\item \textbf{AlphaZero uses this approach}
-	\end{itemize}
-\end{frame}
-
-
-\begin{frame}
-	\frametitle{Virtual Loss: Lock-Free Synchronization}
-	
-	\textbf{Problem:} Threads all select the same ``best'' node $\Rightarrow$ wasted work
-	
-	\vspace{0.4cm}
-	
-	\textbf{Solution:} When thread selects node $s$, \textit{atomically} apply virtual loss:
-	$$
-	N(s) \xleftarrow{\text{atomic}} N(s) + 1, \quad W(s) \xleftarrow{\text{atomic}} W(s) - 1
-	$$
-	
-	\vspace{0.2cm}
-	
-	\begin{center}
-	\begin{tikzpicture}[font=\small]
-		\node[draw, rounded corners, fill=blue!10] (select) at (0,0) {Select path};
-		\node[draw, rounded corners, fill=red!10] (vl) at (3,0) {Add virtual loss};
-		\node[draw, rounded corners, fill=green!10] (eval) at (6,0) {Evaluate};
-		\node[draw, rounded corners, fill=yellow!10] (backup) at (9,0) {Backup (fix)};
-		
-		\draw[->] (select) -- (vl);
-		\draw[->] (vl) -- (eval);
-		\draw[->] (eval) -- (backup);
-	\end{tikzpicture}
-	\end{center}
-	
-	\vspace{0.2cm}
-	
-	\textbf{Effect:} Node looks worse $\Rightarrow$ other threads explore elsewhere
-	
-	\vspace{0.2cm}
-	
-	\small
-	Mutexes mostly not a problem! Still have to use them in some cases. Atomic ops provide thread safety.
-\end{frame}
-
-
-% \begin{frame}
-% 	\frametitle{Parallelization Comparison}
-	
-% 	\begin{center}
-% 	\begin{tabular}{l|c|c|c}
-% 		& \textbf{Leaf} & \textbf{Root} & \textbf{Tree} \\
-% 		\hline
-% 		Complexity & Low & Low & High \\
-% 		Synchronization & None & None & Locks \\
-% 		Speedup efficiency & Low & Medium & High \\
-% 		Memory & $1\times$ & $k\times$ & $1\times$ \\
-% 		Distributed & No & Yes & Harder \\
-% 	\end{tabular}
-% 	\end{center}
-	
-% 	\vspace{0.5cm}
-	
-% 	\textbf{AlphaZero uses tree parallelization} with virtual loss.
-	
-% 	\vspace{0.3cm}
-	
-% 	\small
-% 	Scale: 5000 TPUs for training, 4 TPUs for inference during play.
-% \end{frame}
-
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% PART 2: ALPHAZERO
+\section{AlphaZero's search}
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-% \section{AlphaZero}
-
-% \begin{frame}
-% 	\frametitle{From AlphaGo to AlphaZero}
-	
-% 	\begin{tabular}{l|l|l}
-% 		\textbf{Version} & \textbf{Year} & \textbf{Key Feature} \\
-% 		\hline
-% 		AlphaGo Fan & 2015 & Beat European champion \\
-% 		AlphaGo Lee & 2016 & Beat Lee Sedol 4-1 \\
-% 		AlphaGo Zero & 2017 & \textbf{No human data}, self-play only \\
-% 		AlphaZero & 2018 & Chess, Shogi, Go with same algorithm \\
-% 	\end{tabular}
-	
-% 	\vspace{0.8cm}
-	
-% 	\textbf{Key insight:} Self-play + MCTS + neural networks = superhuman play
-	
-% 	\vspace{0.3cm}
-	
-% 	No hand-crafted features, no human games needed.
-% \end{frame}
-
-
 \begin{frame}
-	\frametitle{AlphaZero: Key Innovations}
-	
-	\textbf{Two changes to MCTS:}
-	
-	\vspace{0.5cm}
-	
-	\textbf{1. Neural network replaces rollouts}
-	\begin{itemize}
-		\item Directly estimate value $v$ --- no random simulation
-	\end{itemize}
-	
-	\vspace{0.5cm}
-	
-	\textbf{2. Learned prior guides search}
-	\begin{itemize}
-		\item Policy $\mathbf{p}$ focuses on promising moves
-	\end{itemize}
-	
-	\vspace{0.5cm}
-	
-	$\Rightarrow$ Far fewer simulations needed (800 vs 10,000+)
+    \frametitle{One network, two heads}
+    AlphaZero keeps the tree search and adds a network $f_\bth(s) = \big(p_\bth(\cdot|s),\, v_\bth(s)\big)$:
+    \begin{center}
+    \begin{tikzpicture}[
+        box/.style={draw, thick, rounded corners, minimum height=7mm, align=center, fill=white},
+        node distance=4mm and 5mm]
+        \node[align=center] (s) {board\\$s$};
+        \node[box, fill=gray!15, minimum width=22mm, minimum height=10mm, right=of s] (body)
+            {conv trunk\\\scriptsize (2 ResBlocks)};
+        \node[box, minimum width=18mm, right=of body, yshift=8mm] (actor) {actor head};
+        \node[box, minimum width=18mm, right=of body, yshift=-8mm] (critic) {critic head};
+        \node[right=of actor, align=left] {$p_\bth(\cdot|s)$: \textit{which column?}};
+        \node[right=of critic, align=left] {$v_\bth(s) \in [-1,1]$: \textit{who's winning?}};
+        \draw[->, thick] (s) -- (body);
+        \draw[->, thick] (body.east) -- (actor.west);
+        \draw[->, thick] (body.east) -- (critic.west);
+        \draw[->, thick] (actor.east) -- ++(4mm,0);
+        \draw[->, thick] (critic.east) -- ++(4mm,0);
+    \end{tikzpicture}
+    \end{center}
+    \pause
+    Two changes to MCTS:
+    \begin{enumerate}
+        \item \textbf{No random rollouts.} At a new leaf, ask the \blue{critic} $v_\bth(s)$
+        how the game will end.
+        \item \textbf{A prior in selection.} The \red{actor} $p_\bth(\cdot|s)$ says which
+        moves are worth searching first.
+    \end{enumerate}
+    \pause
+    \vspace{0.1cm}
+    Far fewer simulations needed: the prior prunes the search, and one network call
+    replaces a whole random playout.
 \end{frame}
 
 
 \begin{frame}
-	\frametitle{Neural Network Architecture}
-	
-	Single network with two heads:
-	$$
-	f_\bth(s) = \big(P_\bth(\cdot|s), \, \hat{V}_\bth(s)\big)
-	$$
-	
-	\vspace{0.5cm}
-	
-	\begin{tabular}{l|l}
-		\textbf{Policy head} $P_\bth(\cdot|s)$ & Prob. distribution over actions \\
-		& $\Rightarrow$ guides MCTS selection \\
-		\hline
-		\textbf{Value head} $\hat{V}_\bth(s) \in [-1,+1]$ & Estimated win probability \\
-		& $\Rightarrow$ replaces rollouts \\
-	\end{tabular}
-	
-	\vspace{0.5cm}
-	
-	\textbf{Architecture:} ResNet with two linear heads
+    \frametitle{Whose point of view?}
+    Every value in this project is from the perspective of the \textbf{player to move}.
+    \begin{columns}[T]
+    \begin{column}{0.48\linewidth}
+    \centering
+    \cfour[0.3]{3/0, 2/0, 3/2}{3/1, 4/0}
+
+    \small
+    \texttt{obs}: pieces in fixed colours\\
+    (channels: empty, player 1, player 2)\\
+    \textbf{plus} \texttt{is\_player1 = False}
+    \end{column}
+    \begin{column}{0.48\linewidth}
+    \centering
+    \cfour[0.3]{3/1, 4/0}{3/0, 2/0, 3/2}
+
+    \small
+    \texttt{canonicalise\_obs(obs, is\_player1)}:\\
+    (channels: empty, \textbf{mover}, \textbf{opponent})\\
+    the mover is always drawn as red
+    \end{column}
+    \end{columns}
+    \pause
+    \vspace{0.2cm}
+    \texttt{eval\_net} canonicalises before calling the model, so it only ever learns to play
+    one side. $p_\bth$ and $v_\bth$ are \textbf{always for the player to move}:
+    no sign bookkeeping outside the net.
+    \pause
+    \begin{block}{The only sign rule (negamax)}
+        One ply changes who is moving, and the game is zero-sum:
+        $\quad\text{value for parent's mover} = -\,\text{value for child's mover}$.
+    \end{block}
 \end{frame}
 
 
 \begin{frame}
-	\frametitle{AlphaZero MCTS}
-	
-	\begin{center}
-		\includegraphics[width=1\linewidth]{img/alpha_zero.png}
-	\end{center}
-	
-	\vspace{0.2cm}
-	
-	\textbf{Key difference:} No simulation/rollout---$\hat{V}_\bth(s)$ provides backup signal directly.
+    \frametitle{The network in detail}
+    \begin{center}
+    \begin{tikzpicture}[
+        box/.style={draw, rounded corners, align=center, font=\tiny, minimum height=0.8cm},
+        >=Stealth, node distance=0.25cm
+    ]
+        \node[box, fill=gray!15] (in) {board\\\texttt{(B,3,6,7)}};
+        \node[box, fill=blue!10, right=of in] (stem) {Conv $3{\times}3$\\$3 \to 128$\\BN, ReLU};
+        \node[box, fill=blue!20, right=of stem] (r1) {ResBlock\\(128)};
+        \node[box, fill=blue!20, right=of r1] (r2) {ResBlock\\(128)};
+        \node[box, fill=green!15, above right=0.15cm and 0.4cm of r2] (actor)
+            {\textbf{actor}: Conv $1{\times}1 \to 32$\\BN, ReLU, flatten\\Linear $\to 7$};
+        \node[box, fill=red!10, below right=0.15cm and 0.4cm of r2] (critic)
+            {\textbf{critic}: Conv $1{\times}1 \to 3$\\BN, ReLU, flatten, Linear $\to 32$\\ReLU, Linear $\to 1$, tanh};
+        \node[font=\tiny, align=center, right=0.2cm of actor] (lo) {logits\\\texttt{(B,7)}};
+        \node[font=\tiny, align=center, right=0.2cm of critic] (vo) {value\\\texttt{(B,)}};
+
+        \draw[->] (in) -- (stem);
+        \draw[->] (stem) -- (r1);
+        \draw[->] (r1) -- (r2);
+        \draw[->] (r2.east) -- (actor.west);
+        \draw[->] (r2.east) -- (critic.west);
+        \draw[->] (actor) -- (lo);
+        \draw[->] (critic) -- (vo);
+    \end{tikzpicture}
+    \end{center}
+
+    \vspace{0.2cm}
+    \small
+    \begin{itemize}
+        \item \textbf{ResBlock:} $x \to$ Conv-BN-ReLU $\to$ Conv-BN $\to (+x) \to$ ReLU
+        \item \textbf{Shared trunk}, two heads. The $1{\times}1$ conv is a per-square shared Linear
+        that shrinks 128 channels before flattening
+        \item \textbf{tanh} keeps the value in $[-1,1]$, the same range as the targets $z$
+        \item Convs use \texttt{bias=False}: the BatchNorm straight after makes a bias redundant
+    \end{itemize}
+    Same building blocks as the ResNet day [0.2].
 \end{frame}
 
 
 \begin{frame}
-	\frametitle{PUCT: Selection with Prior}
-	
-	AlphaZero uses \textbf{PUCT} instead of UCB:
-	
-	\begin{block}{PUCT Tree Policy}
-	$$
-	a^* = \argmax_a \left[ Q(s, a) + c_{\text{puct}} \cdot \red{P_\bth(a|s)} \cdot \frac{\sqrt{1+N(s)}}{1 + N(s, a)} \right]
-	$$
-	\end{block}
-	
-	\vspace{0.3cm}
-	
-	\textbf{Key difference:} Prior $\red{P_\bth(a|s)}$ from network weights exploration
-	
-	\vspace{0.3cm}
-	
-	\begin{itemize}
-		\item Initially: explore actions network likes ($P_\bth(a|s)$ high)
-		\item Later: $Q(s,a)$ dominates (exploitation)
-		\item Search can override prior if data disagrees
-	\end{itemize}
-	
-	\vspace{0.3cm}
-	
-	\textbf{Result:} Network provides intuition, MCTS refines it.
+    \frametitle{What the tree stores}
+    \begin{columns}
+    \begin{column}{0.46\linewidth}
+    \centering
+    \begin{tikzpicture}[
+        nd/.style={circle, draw, thick, minimum size=8mm},
+        el/.style={font=\scriptsize, align=center, fill=white, inner sep=1pt}]
+        \node[nd, fill=red!20] (r) at (0,0) {$s$};
+        \node[nd, fill=yellow!40] (a) at (-1.9,-2.2) {};
+        \node[nd, fill=yellow!40] (b) at (0,-2.2) {};
+        \node[nd, draw=gray, dashed] (c) at (1.9,-2.2) {};
+        \draw[->, thick] (r) -- (a);
+        \draw[->, thick] (r) -- (b);
+        \draw[->, thick, gray, dashed] (r) -- (c);
+        \node[el, below=1mm of a] {$N{=}6$\\$Q{=}{+}0.4$\\$P{=}0.5$};
+        \node[el, below=1mm of b] {$N{=}3$\\$Q{=}{-}0.1$\\$P{=}0.3$};
+        \node[el, below=1mm of c, text=gray] {$N{=}0$\\$Q{=}0$\\$P{=}0.2$\\not expanded};
+    \end{tikzpicture}
+    \end{column}
+    \begin{column}{0.52\linewidth}
+    \textbf{Nodes} are positions (board + who moves).
+    \textbf{Edges} are moves, and carry the statistics:
+    \begin{itemize}
+        \item $N(s,a)$: visit count
+        \item $W(s,a)$: sum of backed-up values
+        \item $Q(s,a) = W(s,a) / \max(1, N(s,a))$
+        \item $P(s,a) = p_\bth(a|s)$: the prior
+    \end{itemize}
+    \vspace{0.2cm}
+    $W$ and $Q$ are from the point of view of \textbf{$s$'s mover}: the player choosing
+    between these edges.
+
+    \vspace{0.2cm}
+    \small Children are created lazily: one new node per simulation.
+    \end{column}
+    \end{columns}
 \end{frame}
 
 
 \begin{frame}
-	\frametitle{MCTS Policy: $\boldsymbol{\pi}$}
-	
-	After running MCTS, we extract an \textbf{improved policy} from visit counts:
-	
-	$$
-	\pi(a|s) = \frac{N(s,a)^{1/\tau}}{\sum_{a'} N(s,a')^{1/\tau}}
-	$$
-	
-	\vspace{0.3cm}
-	
-	\textbf{Temperature $\tau$} controls exploration:
-	\begin{itemize}
-		\item $\tau = 1$: $\pi(a|s) \propto N(s,a)$ (proportional to visits)
-		\item $\tau \to 0$: $\pi(a|s) \to \mathbf{1}[a = \argmax_{a'} N(s,a')]$ (deterministic)
-	\end{itemize}
-	
-	\vspace{0.3cm}
-	
-	\textbf{Key insight:} $\boldsymbol{\pi}$ is \textit{better} than network's prior $P_\bth(\cdot|s)$!
-	\begin{itemize}
-		\item MCTS refines the policy through search
-		\item Use $\boldsymbol{\pi}$ as training target to improve the network
-	\end{itemize}
+    \frametitle{Select: PUCT}
+    At each node, take the legal move with the highest score:
+    \begin{block}{PUCT (Predictor + Upper Confidence Trees)}
+        $$
+        \PUCT(s,a) = \underbrace{Q(s,a)}_{\text{exploit}}
+        + \underbrace{c_{\text{puct}} \cdot \red{P(s,a)} \cdot
+        \frac{\sqrt{1 + \sum_{a'} N(s,a')}}{1 + N(s,a)}}_{\text{explore}}
+        $$
+    \end{block}
+    \begin{itemize}
+        \pause
+        \item Exploration is large for moves the \red{prior likes} but we have \textbf{rarely tried},
+        and shrinks as $N(s,a)$ grows.
+        \item So the search first follows the network's suggestions, then increasingly trusts
+        the values $Q$ it has actually measured. It can overrule the prior.
+        \pause
+        \item Why $\sqrt{1 + \sum N}$? On a node's first visit every $N = 0$ and $Q = 0$.
+        Without the $+1$ every move scores $0$; with it, the score is $\propto P(s,a)$,
+        so we follow the prior straight away.
+        \item Stop when the chosen move has \textbf{no child yet}, or we reach a \textbf{finished game}.
+    \end{itemize}
 \end{frame}
 
 
 \begin{frame}
-	\frametitle{AlphaZero: The Loss Function}
-	
-	The neural network $f_\bth(s) = \big(P_\bth(\cdot|s), \hat{V}_\bth(s)\big)$ is trained to minimize:
-	
-	\begin{block}{AlphaZero Loss}
-	$$
-	L(\bth) = \underbrace{(z - \hat{V}_\bth)^2}_{\text{value loss}} + 
-	\underbrace{(-\boldsymbol{\pi}^T \log \mathbf{p}_\bth)}_{\text{policy loss}} + 
-	\underbrace{c \|\bth\|^2}_{\text{L2 reg.}}
-	$$
-	\end{block}
-	
-	\vspace{0.3cm}
-	
-	\textbf{Training data from self-play:}
-	\begin{itemize}
-		\item $\boldsymbol{\pi}$ = MCTS visit distribution (target policy)
-		\item $z \in \{-1, +1\}$ = game outcome (target value)
-	\end{itemize}
-	
+    \frametitle{Expand and evaluate: no rollouts}
+    \textbf{Expand:} play the chosen move in the simulator and add the new node.
+
+    \vspace{0.3cm}
+    \pause
+    \textbf{Evaluate:} what is the leaf worth, \textit{to the leaf's mover}?
+    \begin{center}
+    \small
+    \renewcommand{\arraystretch}{1.3}
+    \begin{tabular}{l|l}
+        \textbf{the leaf is\ldots} & \textbf{its value} \\ \hline
+        new, and the game is still going & $v_\bth(\text{leaf})$, from the \blue{critic} \\
+        new, and the move just ended the game & $-r$ \\
+        a finished game, reached again & the $-r$ stored when it was created
+    \end{tabular}
+    \end{center}
+    \pause
+    \begin{itemize}
+        \item $r$ is the reward to the player who \textit{just moved}: $+1$ win, $0$ draw.
+        (You can't lose on your own move.) The leaf's mover is the \textit{other} player, hence $-r$.
+        \item A new non-terminal leaf also gets its prior $P(\text{leaf}, \cdot)$: the softmax of
+        the \red{actor's} logits over the \textbf{legal} columns.
+    \end{itemize}
 \end{frame}
 
 
 \begin{frame}
-	\frametitle{Loss Function: Components}
-	
-	\begin{block}{AlphaZero Loss (Expanded)}
-	$$
-	L(\bth) = (z - \hat{V}_\bth(s))^2 - \sum_{a \in \mathcal{A}} \pi(a|s) \log P_\bth(a|s) + c \|\bth\|^2
-	$$
-	\end{block}
-	
-	\vspace{0.3cm}
-	
-	\textbf{Value Loss} (MSE): learn to predict game outcome
-	$$
-	L_v = (z - \hat{V}_\bth(s))^2
-	$$
-	
-	\textbf{Policy Loss} (Cross-entropy): distill MCTS into network
-	$$
-	L_\pi = -\boldsymbol{\pi}^T \log \mathbf{p}_\bth = -\sum_{a \in \mathcal{A}} \pi(a|s) \log P_\bth(a|s)
-	$$
-	
-	\textbf{L2 Regularization}: prevent overfitting
-	$$
-	L_{\text{reg}} = c \|\bth\|^2
-	$$
+    \frametitle{Backup: negamax}
+    Walk from the leaf to the root. At each step up, \textbf{flip the sign}, then update the edge:
+    $N(s,a) \mathrel{+}= 1$, $\;W(s,a) \mathrel{+}= v$.
+    \begin{center}
+    \begin{tikzpicture}[
+        nd/.style={circle, draw, thick, minimum size=9mm, font=\small},
+        up/.style={font=\small, anchor=west},
+        mv/.style={font=\scriptsize, anchor=east}]
+        \node[nd, fill=red!20]    (s0) at (0, 0)    {$s_0$};
+        \node[nd, fill=yellow!40] (s1) at (0, -1.35) {$s_1$};
+        \node[nd, fill=red!20]    (s2) at (0, -2.7)  {$s_2$};
+        \node[nd, fill=yellow!40, ultra thick] (s3) at (0, -4.05) {$s_3$};
+        \draw[->, thick] (s0) -- (s1);
+        \draw[->, thick] (s1) -- (s2);
+        \draw[->, thick] (s2) -- (s3);
+        \node[mv] at (-0.7, 0)     {red to move};
+        \node[mv] at (-0.7, -1.35) {yellow to move};
+        \node[mv] at (-0.7, -2.7)  {red to move};
+        \node[mv] at (-0.7, -4.05) {yellow to move};
+        \node[up] at (0.85, -4.05) {leaf: $v_\bth(s_3) = \blue{+0.6}$ (good for yellow)};
+        \onslide<2->{\node[up] at (0.5, -3.375) {$W(s_2, \cdot) \mathrel{+}= \red{-0.6}$\quad bad for red};}
+        \onslide<3->{\node[up] at (0.5, -2.025) {$W(s_1, \cdot) \mathrel{+}= \blue{+0.6}$\quad good for yellow};}
+        \onslide<4->{\node[up] at (0.5, -0.675) {$W(s_0, \cdot) \mathrel{+}= \red{-0.6}$\quad bad for red};}
+    \end{tikzpicture}
+    \end{center}
+    \onslide<5->{
+    Each edge's $W$ ends up from the point of view of the player who \textbf{chooses} that edge,
+    which is exactly what PUCT needs to maximise.
+    }
 \end{frame}
 
 
 \begin{frame}
-	\frametitle{Policy Loss: Why Cross-Entropy?}
-	
-	We want the network policy $\mathbf{p}_\bth$ to match MCTS policy $\boldsymbol{\pi}$:
-	$$
-	L_\pi = D_{\text{KL}}(\boldsymbol{\pi} \| \mathbf{p}_\bth) = \sum_{a} \pi(a) \log \frac{\pi(a)}{P_\bth(a)}
-	$$
-	
-	\vspace{0.3cm}
-	
-	Expanding and differentiating:
-	\begin{align*}
-	\nabla_\bth L_\pi &= \nabla_\bth \left[ \underbrace{\sum_a \pi(a) \log \pi(a)}_{-H(\boldsymbol{\pi}), \text{ const. w.r.t. } \bth} - \sum_a \pi(a) \log P_\bth(a) \right] \\[0.3cm]
-	&= -\nabla_\bth \sum_a \pi(a) \log P_\bth(a)
-	\end{align*}
-	
-	\vspace{0.3cm}
-	
-	$\Rightarrow$ Minimizing KL $\Leftrightarrow$ minimizing \textbf{cross-entropy}:
-	$$
-	L_\pi = -\sum_{a} \pi(a|s) \log P_\bth(a|s)
-	$$
+    \frametitle{MCTS Algorithm}
+    \textbf{Input:} root position $s_0$, network $f_\bth$, number of simulations $\nsims$
+
+    \textbf{Algorithm:}
+    \begin{enumerate}
+        \item \textbf{Root:} evaluate $s_0$ to get its prior $P(s_0, \cdot) = p_\bth(\cdot|s_0)$.
+        \item \textbf{Repeat $\nsims$ times:}
+        \begin{enumerate}
+            \item \textbf{Select:} from the root, follow $\argmax_a \PUCT(s,a)$ until the
+            chosen edge has no child, or the node is a finished game.
+            \item \textbf{Expand:} play that edge in the simulator; add the new node.
+            \item \textbf{Evaluate:} leaf value $v$: $v_\bth$ for a live position, $-r$ for a finished one.
+            \item \textbf{Backup:} walk to the root, negating $v$ at each step;
+            $N \mathrel{+}= 1$, $W \mathrel{+}= v$ on every edge.
+        \end{enumerate}
+        \item \textbf{Return} the root visit counts $N(s_0, \cdot)$.
+    \end{enumerate}
+    \vspace{0.2cm}
+    Each simulation adds \textbf{at most one node} and makes \textbf{one network call}.
 \end{frame}
 
 
 \begin{frame}
-	\frametitle{Policy Improvement via Distillation}
-	
-	\textbf{Key insight:} MCTS improves the policy!
-	
-	\vspace{0.5cm}
-	
-	\begin{center}
-	\begin{tikzpicture}[node distance=2.5cm, every node/.style={font=\small}]
-		\node[draw, rounded corners] (net) {Network $P_\bth$};
-		\node[draw, rounded corners, right of=net] (mcts) {MCTS};
-		\node[draw, rounded corners, right of=mcts] (pi) {$\boldsymbol{\pi}$ (better!)};
-		\node[draw, rounded corners, below of=mcts] (train) {Train};
-		
-		\draw[->] (net) -- (mcts);
-		\draw[->] (mcts) -- (pi);
-		\draw[->] (pi) -- (train);
-		\draw[->] (train) -- (net);
-	\end{tikzpicture}
-	\end{center}
-	
-	\vspace{0.3cm}
-	
-	Better network $\to$ better MCTS $\to$ better targets $\to$ better network...
+    \frametitle{AlphaZero MCTS, as in the paper}
+    \begin{center}
+        \includegraphics[width=1\linewidth]{img/alpha_zero.png}
+    \end{center}
+
+    \small
+    \textbf{(a)} select by $Q + U$ \quad
+    \textbf{(b)} expand, query $(\mathbf{p}, v) = f_\bth(s)$ \quad
+    \textbf{(c)} back up $v$ \quad
+    \textbf{(d)} play from the visit counts $\pi$
+
+    \vspace{0.1cm}
+    \scriptsize
+    Figure: Silver et al.\ (2017), \textit{Mastering the game of Go without human knowledge}.
 \end{frame}
 
 
 \begin{frame}
-	\frametitle{Self-Play Training Loop}
-	
-	\begin{algorithmic}[1]
-		\State Initialize network $f_\bth$ randomly
-		\Loop
-			\State \textbf{Self-play:} Run MCTS, collect $(s, \boldsymbol{\pi}, z)$
-			\State \textbf{Train:} Minimize $L(\bth)$ on minibatch
-		\EndLoop
-	\end{algorithmic}
-
-	% \vspace{0.3cm}
-
-	% \begin{block}{What is the value target $z$ for non-terminal $s$?}
-	% 	Each game is played out to the very end, and states are labelled
-	% 	with that game's terminal value. The critic is then just a classifer
-	% 	that, given a state, tries to predict the terminal value if 
-	% 	the game was played out.
-	% \end{block}
-
-	\vspace{0.3cm}
-
-	\textbf{Temperature $\tau$} controls move selection: $\pi(a) \propto N(s, a)^{1/\tau}$
-	
-	\vspace{0.3cm}
-	
-	\begin{itemize}
-		\item $\tau = 1$: Sample proportional to visits (exploration)
-		\item $\tau \to 0$: Pick most visited (exploitation)
-	\end{itemize}
-	
-	\vspace{0.3cm}
-	
-	\small
-	AlphaZero: $\tau=1$ for first 30 moves, then $\tau \to 0$.
+    \frametitle{Search makes a better policy}
+    The root visit counts define the \textbf{tree policy}:
+    $$
+    \pi(a|s) = \frac{N(s,a)^{1/\tau}}{\sum_{a'} N(s,a')^{1/\tau}}
+    \qquad
+    \begin{cases}
+        \tau = 1: & \pi \propto N \;\text{(explore)} \\
+        \tau \to 0: & \text{most-visited move (play to win)}
+    \end{cases}
+    $$
+    \pause
+    $\pi$ is \textbf{stronger} than the raw prior $p_\bth$: it is $p_\bth$ plus lookahead.
+    \begin{itemize}
+        \pause
+        \item Give MCTS a \textit{dummy} network ($v = 0$, uniform prior) and a win-in-one position.
+        With 32 simulations it finds the winning column: the terminal reward backs up the tree.
+        The search alone does the tactics.
+        \pause
+        \item Take a trained network and search more at play time (0, 1, 2, \ldots, 64 sims):
+        accuracy against the perfect solver climbs, with \textbf{no retraining}.
+    \end{itemize}
+    \pause
+    \vspace{0.2cm}
+    \textbf{Idea:} train $p_\bth$ to imitate $\pi$. A better $p_\bth$ gives a better search,
+    which gives a better $\pi$, and so on.
 \end{frame}
 
-
-% \begin{frame}
-% 	\frametitle{AlphaZero vs Traditional MCTS}
-	
-% 	\begin{center}
-% 	\begin{tabular}{l|c|c}
-% 		& \textbf{MCTS} & \textbf{AlphaZero} \\
-% 		\hline
-% 		Selection & UCB & PUCT + prior \\
-% 		Evaluation & Random rollout & Network $v$ \\
-% 		Prior & Uniform & Network $\mathbf{p}$ \\
-% 		Simulations & 1000s & 100s \\
-% 	\end{tabular}
-% 	\end{center}
-	
-% 	\vspace{0.5cm}
-	
-% 	\textbf{Synergy:} Network provides fast intuition, MCTS refines it.
-% \end{frame}
-
-
-% \begin{frame}
-% 	\frametitle{Results}
-	
-% 	\begin{center}
-% 	\begin{tabular}{l|l|l}
-% 		\textbf{Game} & \textbf{Opponent} & \textbf{Result} \\
-% 		\hline
-% 		Chess & Stockfish 8 & 28W-72D-0L \\
-% 		Go & AlphaGo Lee & 100W-0L \\
-% 		Shogi & Elmo & 90W-8D-2L \\
-% 	\end{tabular}
-% 	\end{center}
-	
-% 	\vspace{0.5cm}
-	
-% 	\textbf{Training:} 4 hours (Chess), 40 days (Go) on TPUs
-	
-% 	\textbf{Inference:} 800 MCTS simulations per move
-	
-% 	\vspace{0.3cm}
-	
-% 	No human games, no hand-crafted features---just self-play.
-% \end{frame}
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Learning from self-play}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \begin{frame}
-	\frametitle{Summary}
-	
-	\textbf{MCTS:} Select $\to$ Expand $\to$ Simulate $\to$ Backup
-	
-	\vspace{0.3cm}
-	
-	\textbf{AlphaZero:} Replace simulation with neural network $f_\bth(s) = \big(P_\bth(\cdot|s), \hat{V}_\bth(s)\big)$
-	
-	\vspace{0.5cm}
-	
-	\textbf{Loss:}
-	$$
-	L = \underbrace{(z-\hat{V}_\bth)^2}_{\text{value}} + \underbrace{(-\boldsymbol{\pi}^T \log \mathbf{p}_\bth)}_{\text{policy}} + \underbrace{c\|\bth\|^2}_{\text{reg}}
-	$$
-	
-	\vspace{0.5cm}
-	
-	\textbf{Parallelization:} Leaf, Root, or Tree (with virtual loss)
+    \frametitle{Self-play: one ply}
+    The network plays both sides. In every game, at every ply:
+    \begin{enumerate}
+        \item \textbf{Search:} run MCTS from the current position $s_t$ (with root noise, next slide).
+        \item \textbf{Target:} $\pi_t = $ root visit counts, normalised. No temperature here.
+        \item \textbf{Act:} sample $a_t$ from the visit counts at temperature $\tau$ and step the game.
+        Finished games restart.
+        \item \textbf{Record} $(s_t,\ \pi_t,\ d_t,\ r_t)$: done flag and reward to the mover.
+    \end{enumerate}
+    \pause
+    \vspace{0.2cm}
+    The \textbf{training target} and the \textbf{move played} only coincide at $\tau = 1$.
+    We use $\tau = 1$ on every ply. (AlphaGo Zero used $\tau = 1$ for the first 30 moves, then
+    $\tau \to 0$; a schedule is a bonus exercise.)
+    \pause
+    \vspace{0.2cm}
+
+    \textbf{Exploration problem:} MCTS mostly searches moves the network already likes, and the network
+    only learns about moves the search explores. A young network can lock onto a few openings.
 \end{frame}
 
 
 \begin{frame}
-	\frametitle{References}
-	
-	\begin{itemize}
-		\item Sutton \& Barto, \textit{Reinforcement Learning: An Introduction}, Chapter 8.11
-		\url{http://incompleteideas.net/book/the-book-2nd.html}
-		
-		\item Silver et al., \textit{Mastering the game of Go with deep neural networks and tree search} (Nature, 2016)
-		\url{https://www.nature.com/articles/nature16961}
-		
-		\item Silver et al., \textit{Mastering the game of Go without human knowledge} (Nature, 2017)
-		\url{https://www.nature.com/articles/nature24270}
-		
-		\item Silver et al., \textit{A general reinforcement learning algorithm that masters chess, shogi, and Go through self-play} (Science, 2018)
-		\url{https://www.science.org/doi/10.1126/science.aar6404}
-		
-		\item Browne et al., \textit{A Survey of Monte Carlo Tree Search Methods} (2012)
-		\url{https://ieeexplore.ieee.org/document/6145622}
-	\end{itemize}
+    \frametitle{Root exploration noise}
+    \begin{block}{Dirichlet noise, at the root only}
+        $$
+        P(s_0, a) \leftarrow (1-\epsilon)\, p_\bth(a|s_0) + \epsilon\, \eta_a,
+        \qquad \eta \sim \text{Dir}(\alpha)
+        $$
+    \end{block}
+    \begin{itemize}
+        \item $\text{Dir}(\alpha)$ is a distribution over probability vectors (the simplex),
+        with the same $\alpha$ for every column:
+        \begin{itemize}
+            \item $\alpha < 1$: spiky. Occasionally gives one ignored move a big boost
+            \item $\alpha = 1$: uniform over the simplex
+            \item $\alpha > 1$: flat. A mild perturbation around $(\frac{1}{7}, \dots, \frac{1}{7})$
+        \end{itemize}
+        \pause
+        \item Only at the root: it changes \textit{which lines get explored}, without corrupting
+        the value estimates deeper in the tree.
+        \item Off at evaluation and when checking batched vs single-game search.
+    \end{itemize}
+    \vspace{0.2cm}
+    \small
+    We use $\epsilon = 0.25$, $\alpha = 10/7 \approx 1.43$ (AlphaZero: $0.3$ for chess, $0.03$ for Go).
 \end{frame}
 
 
+\begin{frame}
+    \frametitle{Value targets: walk backwards}
+    The critic's target $z_t$ is how the game actually ended, \textbf{for the mover at ply $t$}.
+    \begin{block}{Backwards scan (negamax)}
+        $$
+        z_t = \begin{cases}
+            r_t & \text{if ply $t$ ended the game} \\
+            -z_{t+1} & \text{otherwise}
+        \end{cases}
+        $$
+    \end{block}
+    \pause
+    Like \texttt{compute\_returns} from VPG ($\gamma = 1$), plus a sign flip each ply.
+    One row of a generation (red wins on ply 4, then a new game starts):
+    \begin{center}
+    \begin{tikzpicture}[
+        cell/.style={draw, thick, minimum size=8.5mm, font=\normalsize},
+        lab/.style={font=\scriptsize, anchor=east}]
+        \def\dx{1.25}
+        \node[lab] at (-0.6, 0) {$z_t$};
+        \node[lab] at (-0.6, -0.8) {to move};
+        \foreach \i/\m in {0/red, 1/yellow, 2/red, 3/yellow, 4/red, 5/red, 6/yellow, 7/red} {
+            \node[font=\scriptsize] at (\i*\dx, -0.8) {\m};
+            \node[font=\scriptsize, gray] at (\i*\dx, -1.2) {$t{=}\i$};
+        }
+        \foreach \i/\z/\c in {0/{+1}/red!20, 1/{-1}/yellow!40, 2/{+1}/red!20, 3/{-1}/yellow!40, 4/{+1}/red!20} {
+            \node[cell, fill=\c] (z\i) at (\i*\dx, 0) {$\z$};
+        }
+        \foreach \i in {5,6,7} {
+            \node[cell, fill=gray!15, text=gray] (z\i) at (\i*\dx, 0) {?};
+        }
+        \foreach \i/\j in {1/0, 2/1, 3/2, 4/3} {
+            \draw[->, thick] (z\i.north) to[bend right=50] node[above, font=\scriptsize] {$\times(-1)$} (z\j.north);
+        }
+        \node[font=\scriptsize, anchor=south west, align=left] at ($(z4.north east)+(0.1,0.1)$) {$r_4 = +1$:\\red won};
+        \draw[dashed, thick] (4.5*\dx, 0.6) -- (4.5*\dx, -1.4);
+        \node[font=\scriptsize, gray] at (6*\dx, -1.6) {game unfinished: dropped};
+    \end{tikzpicture}
+    \end{center}
+\end{frame}
+
+
+\begin{frame}
+    \frametitle{The loss: distil the search into the network}
+    Each recorded ply gives a training example $(s, \pi, z)$:
+    \begin{block}{AlphaZero loss}
+        $$
+        L(\bth) = \Ex_{(s, \pi, z) \sim \mathcal{D}}\Big[
+        \red{-\sum_a \pi(a|s) \log p_\bth(a|s)}
+        \;+\; c_v \, \blue{\big(v_\bth(s) - z\big)^2}
+        \Big]
+        $$
+    \end{block}
+    \red{Actor:} cross-entropy, imitate the search. \quad
+    \blue{Critic:} squared error, predict the outcome.
+    Plus weight decay (handled by the optimiser).
+    \pause
+    \begin{columns}
+    \begin{column}{0.5\linewidth}
+    \centering
+    \begin{tikzpicture}[b/.style={draw, thick, rounded corners, font=\small, align=center}]
+        \node[b] (net) at (0,0) {network\\$p_\bth, v_\bth$};
+        \node[b] (mcts) at (2.6,0) {search\\(MCTS)};
+        \node[b] (pi) at (2.6,-1.6) {targets\\$\pi, z$};
+        \node[b] (tr) at (0,-1.6) {train};
+        \draw[->, thick] (net) -- node[above, font=\scriptsize] {guides} (mcts);
+        \draw[->, thick] (mcts) -- node[right, font=\scriptsize] {self-play} (pi);
+        \draw[->, thick] (pi) -- (tr);
+        \draw[->, thick] (tr) -- (net);
+    \end{tikzpicture}
+    \end{column}
+    \begin{column}{0.48\linewidth}
+    \small
+    \textbf{Teacher:} network + search. \textbf{Student:} the network alone.
+    The teacher is bootstrapped from the student, but the search makes it a little stronger,
+    even from a random init.
+    \end{column}
+    \end{columns}
+    \pause
+    \vspace{0.2cm}
+    No policy gradient, no advantages, no importance ratio. Just supervised learning
+    on targets the search produced.
+\end{frame}
+
+
+\begin{frame}
+    \frametitle{Policy loss: why cross-entropy?}
+    We want $p_\bth$ to match the search policy $\pi$:
+    $$
+    D_{\text{KL}}(\pi \,\|\, p_\bth) = \sum_{a} \pi(a) \log \frac{\pi(a)}{p_\bth(a)}
+    $$
+    Differentiating:
+    \begin{align*}
+    \nabla_\bth D_{\text{KL}} &= \nabla_\bth \Big[ \underbrace{\sum_a \pi(a) \log \pi(a)}_{-H(\pi),\ \text{const.\ w.r.t.\ } \bth} - \sum_a \pi(a) \log p_\bth(a) \Big] \\[0.2cm]
+    &= -\nabla_\bth \sum_a \pi(a) \log p_\bth(a)
+    \end{align*}
+
+    $\Rightarrow$ Minimising KL $\Leftrightarrow$ minimising \textbf{cross-entropy}
+    $-\sum_a \pi(a|s) \log p_\bth(a|s)$.
+
+    \vspace{0.2cm}
+    \small
+    In code: \texttt{-(pi * F.log\_softmax(logits, -1)).sum(-1).mean()}.
+\end{frame}
+
+
+\begin{frame}
+    \frametitle{Where does the data go?}
+    \begin{center}
+    \footnotesize
+    \renewcommand{\arraystretch}{1.2}
+    \begin{tabular}{l|l|l|l}
+                  & \textbf{keeps data from} & \textbf{samples it as} & \textbf{uses each step} \\ \hline
+        DQN       & many past policies & random, with replacement & many times \\
+        PPO       & one rollout & shuffled minibatches & $K$ times \\
+        AlphaZero & last $K$ generations & shuffled minibatches & once per gen.\ ($K$ total)
+    \end{tabular}
+    \end{center}
+    \pause
+    One AlphaZero \textbf{generation}:
+    \begin{center}
+    \begin{tikzpicture}[b/.style={draw, thick, minimum height=9mm, font=\scriptsize, align=center}]
+        \node[b, fill=red!10, minimum width=30mm] (sp) at (0,0) {self-play, net frozen\\$B$ games $\times$ 42 plies};
+        \node[b, fill=gray!15, minimum width=14mm, right=1mm of sp] (z) {$z$ targets};
+        \node[b, fill=yellow!20, minimum width=20mm, right=1mm of z] (buf) {add to buffer,\\drop oldest gen};
+        \node[b, fill=blue!10, minimum width=16mm, right=1mm of buf] (ep) {one pass\\over buffer};
+        \node[b, fill=gray!15, minimum width=10mm, right=1mm of ep] (ev) {eval};
+        \draw[->, thick] (ev.south) to[bend left=10] node[below, font=\scriptsize] {next generation} (sp.south);
+    \end{tikzpicture}
+    \end{center}
+    \pause
+    \begin{itemize}
+        \item The buffer mixes data from several older networks. That's fine: $(\pi, z)$ are
+        \textbf{labels}, not a policy gradient, so there is no importance ratio to correct.
+        \item Fresher is still better: in tuning, a 4-generation buffer beat an 8-generation one.
+    \end{itemize}
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Making it fast}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{frame}
+    \frametitle{Making it fast: root parallelism}
+    One network call per simulation on a batch of size 1 is far too slow. Instead, run $B$ games
+    at once, each with its \textbf{own independent tree}.
+    \begin{center}
+    \begin{tikzpicture}[
+        nd/.style={circle, draw, minimum size=4.5mm, inner sep=0pt},
+        scale=0.8, transform shape]
+        \foreach \x/\c/\l in {-4.5/red/1, -1.5/green!60!black/2, 1.5/blue/3, 4.5/orange/B} {
+            \begin{scope}[xshift=\x cm]
+                \node[nd, fill=\c!25, draw=\c] (r) at (0,0) {};
+                \node[nd, fill=\c!10, draw=\c] (a) at (-0.6,-0.8) {};
+                \node[nd, fill=\c!10, draw=\c] (b) at (0.6,-0.8) {};
+                \node[nd, fill=\c!40, draw=\c, thick] (l) at (0.6,-1.6) {};
+                \draw[\c, thick] (r) -- (a); \draw[\c, thick] (r) -- (b); \draw[\c, thick] (b) -- (l);
+                \node[font=\scriptsize, \c] at (0,0.5) {game \l};
+                \draw[->, \c, thick] (l) -- (0.6,-2.5);
+            \end{scope}
+        }
+        \node[font=\large] at (3,-0.8) {$\cdots$};
+        \node[draw, thick, rounded corners, fill=gray!15, minimum width=10.5cm, minimum height=7mm]
+            at (0,-2.9) {\small one batched forward pass $f_\bth$ over all $B$ leaves};
+    \end{tikzpicture}
+    \end{center}
+    \pause
+    Per simulation: \textbf{select + expand} in every tree, \textbf{one} network call on the
+    $B$ leaves, \textbf{backup} in every tree.
+    \begin{itemize}
+        \item Every game has a \textbf{different} root. The trees never merge; they only interact
+        through the shared network.
+        \item After the search, sample one move per game and step all $B$ environments.
+    \end{itemize}
+\end{frame}
+
+
+\begin{frame}
+    \frametitle{A stepping stone: batch the net, keep Python trees}
+    \texttt{SimulatedBatchedMCTS}: $B$ ordinary \texttt{Node} trees, section 2's \texttt{select}/\texttt{backup}
+    in a Python \texttt{for} loop, but \textbf{one} network call per simulation.
+    \begin{itemize}
+        \item Shared \texttt{obs\_pool} \texttt{(B, MAXN, 3, 6, 7)}: nodes store an integer \texttt{slot};
+        the batch is a single gather
+        \item Fixed-size batch: terminal leaves are forwarded too (output discarded)
+    \end{itemize}
+
+    \vspace{0.2cm}
+    \begin{center}
+    \footnotesize
+    \begin{tabular}{r|r|r|r}
+        $B$ & Python trees + batched net & fully vectorised & speedup \\
+        \hline
+        64 & 716 & 4{,}751 & $6.6\times$ \\
+        1{,}024 & 689 & 78{,}325 & $114\times$ \\
+        4{,}096 & 691 & 189{,}903 & $275\times$ \\
+        65{,}536 & $\sim$700 & \textbf{229{,}872} & $\mathbf{328\times}$ \\
+    \end{tabular}
+
+    \vspace{0.1cm}
+    \scriptsize env-steps/s, sims = 32, RTX A4000
+    \end{center}
+
+    \small
+    Python tree updates are the bottleneck ($\sim$700 steps/s regardless of $B$).
+    Vectorising select / expand / backup as well gives $\sim 300\times$.
+    We \textbf{give} you the fully vectorised \texttt{BatchedMCTS} for training; building it is the bonus.
+\end{frame}
+
+
+\begin{frame}
+    \frametitle{Why not tree parallelism?}
+    \begin{columns}
+    \begin{column}{0.5\textwidth}
+    \begin{center}
+    \begin{tikzpicture}[
+        every node/.style={circle, draw, minimum size=6mm, font=\scriptsize},
+        scale=0.75, transform shape
+    ]
+        \node[fill=gray!20] (root) at (0,0) {$s_0$};
+        \node[fill=red!30] (a) at (-2,-1.3) {$s_1$};
+        \node (b) at (0,-1.3) {$s_2$};
+        \node[fill=blue!30] (c) at (2,-1.3) {$s_3$};
+        \node[fill=red!30] (a1) at (-2.6,-2.6) {$s_4$};
+        \node (a2) at (-1.4,-2.6) {$s_5$};
+        \node[fill=green!30] (b1) at (-0.4,-2.6) {$s_6$};
+        \node (b2) at (0.4,-2.6) {$s_7$};
+        \node (c1) at (1.4,-2.6) {$s_8$};
+        \node[fill=blue!30] (c2) at (2.6,-2.6) {$s_9$};
+        \draw[->] (root) -- (a);
+        \draw[->] (root) -- (b);
+        \draw[->] (root) -- (c);
+        \draw[->, red, thick] (a) -- (a1);
+        \draw[->] (a) -- (a2);
+        \draw[->, green!50!black, thick] (b) -- (b1);
+        \draw[->] (b) -- (b2);
+        \draw[->] (c) -- (c1);
+        \draw[->, blue, thick] (c) -- (c2);
+        \node[draw=none, red] at (-2.6,-3.3) {W1};
+        \node[draw=none, green!50!black] at (-0.4,-3.3) {W2};
+        \node[draw=none, blue] at (2.6,-3.3) {W3};
+    \end{tikzpicture}
+    \end{center}
+    \end{column}
+    \begin{column}{0.5\textwidth}
+        \small
+        One shared tree, many workers descending different branches.
+
+        \vspace{0.2cm}
+        \green{\checkmark} No duplicated work: all statistics pooled
+
+        \red{$\times$} \textbf{Node contention:} workers read/write the same $N, W$ (especially the root)
+    \end{column}
+    \end{columns}
+
+    \vspace{0.2cm}
+    \small
+    \begin{itemize}
+        \item \textbf{Mutexes:} lock a node before updating it. Contention at popular nodes eats the speedup
+        \item \textbf{Virtual loss:} on the way down, temporarily count the edge as a visited loss so other
+        workers spread out; undo it during backup
+        \item \textbf{Transpositions:} hash positions and share nodes $\Rightarrow$ a DAG, not a tree
+    \end{itemize}
+    DeepMind's AlphaZero searched this way, with the tree in optimised C++ shuttling batches to
+    accelerators. A nightmare to vectorise in PyTorch.
+\end{frame}
+
+
+\begin{frame}
+    \frametitle{Bonus: trees as tensors}
+    Store all $B$ trees as flat tensors indexed \texttt{[game, node, action]}:
+
+    \vspace{0.1cm}
+    \footnotesize
+    \begin{columns}[T]
+    \begin{column}{0.56\textwidth}
+    \begin{itemize}
+        \item \texttt{N, W, P\ \ (B, MAXN+1, 7)}: per edge
+        \item \texttt{child\ \ (B, MAXN+1, 7)}: $-1$ = unexpanded
+        \item \texttt{parent, parent\_act\ \ (B, MAXN+1)}
+        \item \texttt{obs\_pool, tomove, terminal, term\_val}
+        \item \texttt{nptr\ \ (B,)}: next free slot (root = 0)
+    \end{itemize}
+    \end{column}
+    \begin{column}{0.44\textwidth}
+    \begin{itemize}
+        \item \texttt{MAXN = sims + 2}: each simulation adds at most one node
+        \item Backup follows \texttt{parent} pointers home (fine: a strict tree)
+        \item Every phase is \texttt{gather} / \texttt{scatter} / \texttt{where} / \texttt{argmax}
+    \end{itemize}
+    \end{column}
+    \end{columns}
+
+    \vspace{0.3cm}
+
+    \textbf{Lockstep over games of different shapes:}
+    \begin{itemize}
+        \item Leaves sit at different depths: descend for a fixed \texttt{MAXD} steps with a \texttt{done} mask
+        \item Games not expanding this step write to a throwaway \textbf{dustbin} slot (index \texttt{MAXN})
+        \item \textbf{Sync-free:} no \texttt{.item()} in the hot loop, so the GPU never stalls.
+        One deliberate exception: break out of selection early once all games found their leaf ($2.25\times$ faster)
+    \end{itemize}
+
+    \vspace{0.2cm}
+    Test: with noise off, batched and single-game search give \textbf{identical} visit counts.
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Putting it together}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{frame}
+    \frametitle{AlphaZero Algorithm}
+    \textbf{Input:} $B$ parallel games, $\nsims$ simulations per move, buffer of the last $K$ generations
+
+    \textbf{Algorithm: repeat for each generation:}
+    \begin{enumerate}
+        \item \textbf{Self-play} with the network frozen. For 42 plies, in all $B$ games:
+        \begin{itemize}
+            \item MCTS with root noise $\to$ $\pi_t$; sample $a_t$ at temperature $\tau$; step the game
+            \item store $(s_t,\ \pi_t,\ d_t,\ r_t)$; finished games restart
+        \end{itemize}
+        \item \textbf{Targets:} one backwards pass per game row gives $z_t$.
+        Drop plies from games that didn't finish.
+        \item \textbf{Buffer:} add the $(s, \pi, z)$ examples; evict the oldest generation.
+        \item \textbf{Learn:} one pass over the buffer in shuffled minibatches $\mathcal{B}$:
+        $$
+        \bth \leftarrow \bth - \alpha \nabla_\bth L(\bth), \text{ averaged over } \mathcal{B}
+        $$
+        \item \textbf{Evaluate} against the perfect solver.
+    \end{enumerate}
+\end{frame}
+
+
+\begin{frame}
+    \frametitle{The default recipe}
+    \begin{center}
+    \small
+    \renewcommand{\arraystretch}{1.15}
+    \begin{tabular}{l|l}
+        games per generation $B$ & 4096 \\
+        simulations per move $\nsims$ & 16 \quad (64 for the strongest run) \\
+        generations & 12 \quad ($\sim$50 for the full recipe) \\
+        buffer & last $K = 4$ generations \\
+        $c_{\text{puct}}$ & 1.0 \\
+        root noise & $\epsilon = 0.25$, $\alpha = 10/7$ \\
+        optimiser & AdamW, minibatch 1024, grad-norm clip 1.0 \\
+        learning rate & $5 \times 10^{-3} \to 2 \times 10^{-5}$ (cosine) \\
+    \end{tabular}
+    \end{center}
+    \vspace{0.3cm}
+    \begin{itemize}
+        \item About 85\% solver accuracy in 4--5 minutes on one GPU.
+        \item In the tuning sweep, every gain came from \textbf{fresher self-play data}
+        (higher lr, smaller buffer). Capacity, loss weights and regularisation made little difference.
+    \end{itemize}
+\end{frame}
+
+
+\begin{frame}
+    \frametitle{How good is it? Ask a perfect solver}
+    Connect 4 is solved, so we can grade moves instead of playing matches.
+    \begin{itemize}
+        \item About 6700 positions, each labelled by Pascal Pons' solver with its set of
+        optimal moves. Only \textit{decisive} positions are kept: the choice of move must matter.
+        \pause
+        \item One batched forward pass over the set gives:
+        \begin{itemize}
+            \item \textbf{acc:} how often $\argmax_a p_\bth(a|s)$ is an optimal move
+            \item \textbf{ce:} $-\log \sum_{a \text{ optimal}} p_\bth(a|s)$, a smoother signal
+        \end{itemize}
+        \pause
+        \item This grades the \textbf{raw policy}, with no search. Searching at play time makes it
+        stronger still.
+    \end{itemize}
+    \pause
+    \vspace{0.2cm}
+    Then play against it yourself in the browser: \texttt{play\_web(model, env)}.
+\end{frame}
+
+
+\begin{frame}
+    \frametitle{Bonus: search at play time, and more}
+    \begin{itemize}
+        \item \textbf{Accuracy vs search budget:} replay the solver set with $M \in \{0, 1, 2, \dots, 64\}$
+        simulations per move ($M = 0$: raw policy). Accuracy climbs with $M$.
+        \item \textbf{Elo vs $\log(\text{sims})$:} round-robin the \textit{same} network at different budgets
+        and fit Elo ratings. Strength is roughly \textbf{linear in $\log(\text{search})$}: each doubling
+        of thinking time buys a roughly constant Elo gain.
+        \item \textbf{Mirror augmentation:} flip the board left-right, reverse $\pi$, keep $z$.
+        Free extra data (AlphaGo Zero used all 8 symmetries of Go).
+        \item Temperature schedule, subtree reuse between moves, bigger networks,
+        comparison with PPO self-play.
+    \end{itemize}
+\end{frame}
+
+
+\begin{frame}
+    \frametitle{AlphaZero in one slide}
+    \begin{enumerate}
+        \item \textbf{One network, two heads:} $p_\bth$ (which move?) and $v_\bth$ (who's winning?),
+        always from the \textbf{mover's} point of view.
+        \item \textbf{MCTS guided by the network:} PUCT uses the prior to decide what to search;
+        the critic replaces random rollouts. Values flip sign once per ply (negamax).
+        \item \textbf{Search improves the policy:} visit counts $\pi$ beat the raw prior $p_\bth$.
+        \item \textbf{Self-play makes the data:} $(s, \pi, z)$ for every ply, $z$ from one
+        backwards pass.
+        \item \textbf{Distillation:} cross-entropy onto $\pi$, MSE onto $z$. Repeat.
+        \item \textbf{Engineering:} root parallelism over thousands of independent games,
+        with trees, environment and network all on the GPU.
+    \end{enumerate}
+    \pause
+    \vspace{0.3cm}
+    Compared with PPO: no policy gradient at all. The planner is the teacher,
+    and RL happens through the loop: better net $\to$ better search $\to$ better targets.
+\end{frame}
+
+
+\begin{frame}
+    \frametitle{References}
+    \small
+    \begin{itemize}
+        \item Silver et al., \textit{Mastering the game of Go without human knowledge} (Nature, 2017)
+        \url{https://www.nature.com/articles/nature24270}
+
+        \item Silver et al., \textit{A general reinforcement learning algorithm that masters chess,
+        shogi, and Go through self-play} (Science, 2018)
+        \url{https://www.science.org/doi/10.1126/science.aar6404}
+
+        \item Surag Nair, \textit{A Simple Alpha(Go) Zero Tutorial}
+        \url{https://suragnair.github.io/posts/alphazero.html}
+
+        \item Browne et al., \textit{A Survey of Monte Carlo Tree Search Methods} (2012)
+        \url{https://ieeexplore.ieee.org/document/6145622}
+
+        \item Pascal Pons, Connect 4 solver
+        \url{https://github.com/PascalPons/connect4}
+
+        \item Sutton \& Barto, \textit{Reinforcement Learning: An Introduction}, Section 8.11
+        \url{http://incompleteideas.net/book/the-book-2nd.html}
+    \end{itemize}
+\end{frame}
 
 \end{document}
-
