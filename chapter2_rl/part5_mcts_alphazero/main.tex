@@ -64,7 +64,7 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \begin{frame}
-    \frametitle{A new setting: we know the rules}
+    \frametitle{Known environment, unknown strategy}
     \begin{columns}
     \begin{column}{0.66\linewidth}
     So far the agent had to learn the world from experience.
@@ -355,7 +355,7 @@
 
 
 \begin{frame}
-    \frametitle{Expand and evaluate: no rollouts}
+    \frametitle{MCTS}
     \begin{center}
     \begin{tikzpicture}[
         scale=0.9,
@@ -598,7 +598,7 @@
 
 
 \begin{frame}
-    \frametitle{The loss: distil the search into the network}
+    \frametitle{AlphaZero Loss}
     Each recorded ply gives a training example $(s, \pi, z)$:
     \begin{block}{AlphaZero loss}
         $$
