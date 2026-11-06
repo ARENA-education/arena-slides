@@ -456,8 +456,9 @@
     \begin{itemize}
         \item \red{Actor terms}: clipped policy gradient, plus the entropy bonus.
         \item \blue{Critic term}: regress $V_\pth(s_t)$ onto $G^\lambda_t$.
-        \item Actor and critic share a backbone, so one optimiser step on $J^{PPO}$
-        updates both heads, and both losses shape the shared features.
+        \item One optimiser step on $J^{PPO}$ updates both actor and critic. If they share a
+        backbone (as for Atari), both losses shape the shared features; for CartPole
+        they are separate networks.
     \end{itemize}
 \end{frame}
 

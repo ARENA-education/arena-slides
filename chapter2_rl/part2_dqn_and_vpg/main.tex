@@ -165,7 +165,7 @@
 		\item Annoying caveat for episodic environments: Need to modify the TD-error, depending if $s_{t+1}$ 
 		is a terminal state.
 		\item Assume environment samples $(s_{t+1}, r_{t+1}, d_{t+1})$ given $(s_t, a_t)$,
-		where $d_{t+1}$ (done) indicates if the episode ended on timestep $t+1$ ($s_{t+1}$ is arbitrary in such cases).
+		where $d_{t+1}$ indicates if the episode \textit{terminated} on timestep $t+1$ ($s_{t+1}$ is arbitrary in such cases). A time-limit truncation is not a termination: there we still bootstrap.
 		\begin{align*}
 			\delta_t &= y_t - \widehat{Q}_*(s_t, a_t;\theta) \\
 		y_t &= \begin{cases}
@@ -185,7 +185,7 @@
 \begin{frame}[fragile]
 \begin{figure}
 	\centering
-	\includegraphics[width=0.7\linewidth]{img/dqn_algo}
+	\includegraphics[height=0.92\textheight]{img/dqn_algo}
         % generated from algo.tex
         \label{fig:dqnalgo}
 \end{figure}
@@ -274,11 +274,12 @@
     
     \begin{itemize}
     \item In practice, $\pi_\bth : \S \to \Delta \A$ is a neural network mapping a state vector $\mathbf{s}$ to 
-    a vector of logits, one for each action $\A = \{a_1, \ldots, a_n\}$.
+    a vector of logits, one for each action $\A = \{a_1, \ldots, a_n\}$;
+    a softmax turns these into a distribution over actions,
     % $$
     % \mathbf{h}(\mathbf{s};\bth) = [h_1(\mathbf{s};\bth), \ldots, h_n(\mathbf{s};\bth)]
     % $$
-    from which the action is sampled from the distribution.
+    from which the action is sampled.
     \item More principled than $\epsilon$-greedy, as we get exploration for free,
     and exploratory actions are not selected at random, but with a bias away from
 	actions believed to be bad.

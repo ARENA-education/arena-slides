@@ -263,7 +263,7 @@
 
 \begin{frame}
 	\begin{itemize}
-		\item States $\S = {s_0, s_L,s_R}$, actions $\A = \{a_L, a_R\}$,
+		\item States $\S = \{s_0, s_L, s_R\}$, actions $\A = \{a_L, a_R\}$,
 		possible rewards $\R= \{0,1,2\}$.
 		\item Each transition indicates if an action is taken, the reward returned
 		and which state to transition to
@@ -412,7 +412,7 @@ Consider all the \red{actions $a$ that $\pi$} might choose under $s$,
 \item Equation is linear in $V_{\pi}(\cdot)$, 
 giving a set of \textbf{linear} simultaneous equations.
 \pause
-\item Given policy $\pi$, can now easy solve for $V_{\pi}(s_1), V_{\pi}(s_2), \ldots$
+\item Given policy $\pi$, can now easily solve for $V_{\pi}(s_1), V_{\pi}(s_2), \ldots$
 \pause
 \item Computing $V_\pi$ from $\pi$ is called \textbf{policy evaluation}, denote $\pi \overset{E}{\rightarrow} V_\pi$.
 \end{itemize}
@@ -524,8 +524,8 @@ $$
 \end{itemize}
 %\pause
 $$
-\pi_0 \eval V_{\pi_0} \iter \pi_1 \eval V_{\pi_1} \eval \pi_2 \iter V_{\pi_2}
-\eval \ldots \iter \pi_* \eval V_{\pi^*} \iter \pi_* 
+\pi_0 \eval V_{\pi_0} \iter \pi_1 \eval V_{\pi_1} \iter \pi_2 \eval V_{\pi_2}
+\iter \ldots \iter \pi_* \eval V_{\pi_*} \iter \pi_* 
 $$
 \pause
 \textbf{Theorem:} Policy iteration converges to optimal policy in finitely 
@@ -535,7 +535,7 @@ many steps!
 
 \begin{frame}
     \frametitle{Slippery Gridworld}
-    \include{single_gridworld}
+    \input{single_gridworld}
 \end{frame}
 
 \begin{frame}
@@ -545,8 +545,8 @@ many steps!
     %     \includegraphics[width=1\linewidth]{img/gridworld_policy}
     %     \label{fig:gridworldpolicy}
     % \end{figure}
-    \include{gridworld}
-    \vspace{-1.3cm}
+    \input{gridworld}
+    \vspace{-0.3cm}
     \pause
     \begin{enumerate}[(a)]
         \item \textbf{Patient:} The penalty is slight, so the agent takes the long way around to get to heaven.
@@ -566,7 +566,7 @@ many steps!
     \frametitle{Glossary}
     \begin{itemize}
         \item \textbf{Transition} distribution $T : \S \times \A \to \Delta \S$, sample $s' \sim T(\cdot | s,a)$.
-        \item \textbf{Reward} function $R : \S \times \A \times \S \to \mathbb{R}$, write \textbf{reward} $r_{t+1} := R(s_t, a_t, s_{t+1}$)
+        \item \textbf{Reward} function $R : \S \times \A \times \S \to \mathbb{R}$, write \textbf{reward} $r_{t+1} := R(s_t, a_t, s_{t+1})$
         \item \textbf{Policy} $\pi : \S \to \Delta \A$ (stochastic) or $\pi : \S \to \A$ (deterministic), take $a_{t} = \pi(s_t)$ or sample $a_{t} \sim \pi(\cdot | s_t)$.
         \item \textbf{History/Trajectory}
         $
@@ -580,17 +580,14 @@ many steps!
         \item \textbf{Bellman} equation 
         $
         V_\pi(s) = \sum_{s' \in \S} T(s' | s, a) \left( R(s,a,s') + \gamma V_\pi(s') \right) 
-        $ 
+        $, $a = \pi(s)$
 		\item \textbf{Policy Improvement}
 			$
 			\pi'(s) \leftarrow \argmax_{a \in \A} \sum_{s' \in \S} T(s' | s,a) 
 			\left( R(s,a,s') + \gamma V_{\pi}(s') \right)
 			$
 		\item \textbf{Policy Evaluation}
-			Solve
-			$
-			V_\pi(s) = \sum_{a \in \A} \sum_{s' \in \S} T(s' | s, a) \left( r + \gamma V_\pi(s') \right) 
-			$ for $V_\pi(s_1), V_\pi(s_2), \ldots$.
+			Solve the (linear) Bellman equations for $V_\pi(s_1), V_\pi(s_2), \ldots$
         
         \hspace{0pt}
         \rule{0.3\textwidth}{0.5pt}
@@ -756,7 +753,7 @@ On timestep $t$, this is ``\textit{on average}'', equal to the actual reward $r_
 $$
 Q_{*}(s_t, a_t) \approx r_{t+1} + \gamma Q_{*}(s_{t+1}, a_{t+1})
 $$
-Update depends on $(s_t, a_t, r_t, s_{t+1}, a_{t+1})$.
+Update depends on $(s_t, a_t, r_{t+1}, s_{t+1}, a_{t+1})$.
 \pause
 \begin{block}{SARSA Update Rule}
 $$
@@ -912,7 +909,7 @@ Q-learning guaranteed to converge to $Q_*$.
 		\item \textbf{First approach:} Just do random stuff every now and 
 		again, hope for the best
 		$$
-		a^{\epsilon-greedy}_t = \begin{cases}
+		a^{\epsilon\text{-greedy}}_t = \begin{cases}
 			\text{Do random action} & \text{Prob } \epsilon \\
 			\argmax_{a'} \hat{Q}_t(a') & \text{Prob } 1-\epsilon 
 		\end{cases}
@@ -928,8 +925,8 @@ Q-learning guaranteed to converge to $Q_*$.
 		\end{align*}
 		% \pause
 		\item \textbf{Intuition:} Error of
-		$\hat{Q}_t(a)$ is  $\propto \frac{1}{\sqrt{N_t(a)}}$. Add a bonus proportional to variance,
-		so actions with high variance $\equiv$ few samples get explored
+		$\hat{Q}_t(a)$ is  $\propto \frac{1}{\sqrt{N_t(a)}}$. Add a bonus proportional to this standard error,
+		so actions with uncertain estimates $\equiv$ few samples get explored
 		% \pause
 		\item Add $\ln t$ to numerator to ensure every action is sampled
 		infinitely often. \href{https://tor-lattimore.com/downloads/book/book.pdf}{Theory} says $\ln t$ and $c=2$ best.

@@ -1,7 +1,7 @@
 # arena-slides
 
 Beamer decks for [ARENA](https://arena.education/) talks. Folder layout
-mirrors [`ARENA_3.0`](https://github.com/callummcdougall/ARENA_3.0).
+mirrors [`ARENA_materials`](https://github.com/ARENA-education/ARENA_materials).
 
 > **🌐 Live site:** **[arena-education.github.io/arena-slides](https://arena-education.github.io/arena-slides/)** — every deck's handout and presentation PDF, open inline in the browser.
 
@@ -28,7 +28,10 @@ cd chapter<N>_*/part<M>_*
 pdflatex main.tex
 ```
 
-The deck's first line is `\providecommand{\HANDOUT}{1}` — flip `1` ↔ `0`
+To check that every deck compiles (as CI does), run `./check-builds.sh` (handout
+mode) or `./check-builds.sh --present` from the repo root; it needs `latexmk`.
+
+Near the top of each deck is `\providecommand{\HANDOUT}{1}` — flip `1` ↔ `0`
 to change what bare `pdflatex main.tex` produces. The CI ignores it (always
 builds both via the `-usepretex` overrides above) so you can leave it set
 to whichever mode you happen to want locally.

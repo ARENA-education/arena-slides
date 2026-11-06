@@ -19,12 +19,13 @@
 \fi
 \documentclass[10pt,a4paper]{beamer}
 
-\RequirePackage[latin1]{inputenc}
+\RequirePackage[utf8]{inputenc}
 \RequirePackage{amsmath}
 \RequirePackage{amsfonts}
 \RequirePackage{amssymb}
 \RequirePackage{graphicx}
-\RequirePackage{ulem}
+% normalem: keep \emph as italics (plain ulem turns every \emph into an underline).
+\RequirePackage[normalem]{ulem}
 % NOTE: do not add algorithm2e here -- it clobbers algpseudocode's \EndFor /
 % \EndFunction (fatal "Missing number" inside \begin{algorithmic}). No deck uses
 % algorithm2e's commands; pseudocode is written with algpseudocode/algorithmicx.
@@ -85,7 +86,7 @@
 }
 \lstset{style=pystyle}
 
-% Decks set their own \graphicspath after \usepackage{arena_beamer}, but
+% Decks may set their own \graphicspath after \input{../../arena_beamer.sty}, but
 % default to img/ so plain \includegraphics works without ceremony.
 \graphicspath{{img/}}
 
@@ -95,9 +96,8 @@
     \IfFileExists{img/#2.png}{\includegraphics[width=#1]{#2}}{%
     \IfFileExists{img/#2.jpg}{\includegraphics[width=#1]{#2}}{%
     \IfFileExists{img/#2.pdf}{\includegraphics[width=#1]{#2}}{%
-    \IfFileExists{img/#2.svg}{\includegraphics[width=#1]{#2}}{%
         \fbox{\parbox[c][0.45\textheight][c]{#1}{\centering \textit{[image: #3]}\\\scriptsize drop \texttt{img/#2.(png|jpg|pdf)}}}%
-    }}}}%
+    }}}%
 }
 
 \endinput

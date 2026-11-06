@@ -184,8 +184,7 @@
         $\Rightarrow$ orders of magnitude fewer parameters.
     \end{enumerate}
     \pause
-    \item Attention in transformers \emph{sort of} does a similar thing. However, instead of a locality prior, it is a general convolution (constrained to have a backwards-looking prior in autoregressive transformers)
-    sequences.
+    \item Attention in transformers \emph{sort of} does a similar thing, but without the locality prior: it acts like a general, input-dependent convolution over the whole sequence (constrained to look only backwards in autoregressive transformers).
 \end{itemize}
 \end{frame}
 
@@ -263,8 +262,9 @@
 \end{center}
 \pause
 \begin{itemize}
-    \item Gradients struggle to propagate cleanly through many layers; identity
-    is hard to \textit{learn} from scratch.
+    \item Not overfitting (training error is worse too), and not simply vanishing
+    gradients (these nets use BatchNorm): a plain stack of nonlinear layers just
+    finds the identity hard to \textit{learn}.
 \end{itemize}
 \end{frame}
 

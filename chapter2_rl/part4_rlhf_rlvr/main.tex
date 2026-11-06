@@ -68,7 +68,7 @@
     Today: $\pi_\bth$ is now a \textbf{language model}.
     \begin{enumerate}
         \item \textbf{RLHF}: reward model trained on human preferences + KL penalty
-        \item \textbf{RLVR}: reward from a verifier impossible to reward hack
+        \item \textbf{RLVR}: reward from a verifier that is much harder to reward hack
     \end{enumerate}
 \end{frame}
 
@@ -106,7 +106,7 @@
     \begin{itemize}
         \item \textbf{Reward}: $0$ on every step, except the last: $r_T = R(s_0 a_0 \ldots a_{T-1})$.
         \item Fixed length $T$, one reward at the end: discounting only multiplies $r_T$ by
-        $\gamma^{T-1}$, so we \textbf{don't discount}. All returns $G_1,\ldots,G_T$ equal final reward $r_T$.
+        $\gamma^{T-1}$, so we \textbf{don't discount}. All returns $G_0,\ldots,G_{T-1}$ equal the final reward $r_T$.
         %\item We $\sim$never visit the same state twice. 
         \item All the difficulty is in learning to please $R$.
     \end{itemize}
@@ -245,7 +245,7 @@
     We use the \textbf{reverse} KL, $\KL(\pi_\bth \,\|\, \piref)$: $Q = \pi_\bth$ (what we train), $P = \piref$.
     \begin{itemize}
         \item Blows up where $\pi_\bth > 0$ but $\piref = 0$: don't do anything the base model wouldn't.
-        \item Fine for $\pi_\bth=0$ and $\piref>0$ does: we want that!
+        \item Fine where $\pi_\bth=0$ but $\piref>0$: we want that!
         \item $\pi_\bth$ \textbf{concentrates} on part of what $\piref$ already does.
     \end{itemize}
 \end{frame}
@@ -530,7 +530,7 @@
     \pause
     \begin{itemize}
         \item Every token of $o_i$ has the same $\hat{A}_i$.
-        \item Divide by $\red{1/|o_i|}$, and each token is pushed by $\hat{A}_i / |o_i|$.
+        \item Multiply by $\red{1/|o_i|}$, and each token is pushed by $\hat{A}_i / |o_i|$.
         \item $\hat{A}_i > 0$: shorter correct answers get bigger push per token.
         \item $\hat{A}_i < 0$: longer wrong answers get smaller penalty per token.
         \item Dr.\ GRPO divides by a \blue{constant}: $L_\text{max}$ = the generation budget to avoid placing any optimization pressure on generation length.
@@ -729,7 +729,7 @@
     \raggedright
     \tiny
     Sampled text rendered as a chat interface would (words, numbers, lines unchanged); mistakes in red. Qwen3-0.6B-Base $\pm$ RLVR LoRA, $T{=}1$, top-$k$ 50, top-$p$ 0.95.
-    \textbf{Base}: $0/8$ correct ($4$ never box an answer); this one adds its partial products \red{unshifted}, and gets even that sum wrong ($94575$). \textbf{RLVR}: $7/8$ correct, all $7$ the \textit{identical} completion.
+    \textbf{Base}: $0/8$ correct ($4$ never box an answer); this one adds its partial products \red{unshifted}, and gets even that sum wrong (it is $94575$). \textbf{RLVR}: $7/8$ correct, all $7$ the \textit{identical} completion.
 \end{frame}
 
 % \begin{frame}

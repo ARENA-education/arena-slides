@@ -23,6 +23,11 @@ case "${1:-}" in
     *)           echo "usage: $0 [--present]" >&2; exit 2 ;;
 esac
 
+if ! command -v latexmk >/dev/null 2>&1; then
+    echo "latexmk not found: install it (e.g. apt install latexmk, or tlmgr install latexmk)" >&2
+    exit 2
+fi
+
 mapfile -t decks < <(find "$repo_root" -path "$repo_root/chapter*/part*/main.tex" | sort)
 
 if [[ ${#decks[@]} -eq 0 ]]; then
@@ -35,7 +40,8 @@ trap 'rm -rf "$tmp"' EXIT
 
 # Each background job writes its result line to stdout and, on success,
 # touches a sentinel file. We collect failures by walking the sentinels
-# after `wait`, which keeps the per-deck log paths inspectable.
+# after `wait`, and print the tail of each failing deck's log (the temp dir,
+# logs included, is deleted on exit).
 build_one() {
     local tex="$1" rel="$2" outdir="$3"
     if latexmk -pdf -cd -file-line-error -halt-on-error -interaction=nonstopmode \

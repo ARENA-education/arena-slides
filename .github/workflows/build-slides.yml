@@ -224,6 +224,9 @@ jobs:
                 if [[ -z "$talk_title" || "$talk_title" == "$title_line" ]]; then
                     talk_title=$(echo "$topic" | tr '_' ' ')
                 fi
+                # Undo TeX escapes (\& \% \_ \# \$), then HTML-escape.
+                talk_title=$(printf '%s' "$talk_title" | sed -E -e 's/\\([&%_#$])/\1/g' \
+                    -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')
 
                 chap_heading="Chapter ${chap_num} — ${chap_pretty}"
                 if [[ "$chap_heading" != "$current_chap" ]]; then

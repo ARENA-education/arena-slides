@@ -126,8 +126,9 @@
     dataset --- we use \textbf{batches}. The gradient becomes a noisy
     estimate, but each step is much cheaper.
     \pause
-    \item If the batch size is too large, one can do several forward passes
-    over mini-batches and accumulate gradients to emulate a larger batch size.
+    \item If the batch size you want doesn't fit in memory, do several forward and
+    backward passes over smaller mini-batches and accumulate gradients before
+    each optimizer step, to emulate the larger batch size.
     \pause
     \item \textbf{Batch size:}
     \begin{itemize}
@@ -145,7 +146,7 @@ $$ \theta_{t+1} = \theta_t - \alpha\, g_t $$
 \end{block}
 \begin{block}{}
 \begin{lstlisting}[basicstyle=\normalsize\ttfamily]
-class SGD(Optimizer):
+class SGD:
     def __init__(self, params, lr):
         self.params = list(params)
         self.lr = lr
@@ -153,11 +154,11 @@ class SGD(Optimizer):
     @torch.no_grad()
     def step(self):
         for p in self.params:
-            p = p - self.lr * p.grad  # SGD update
+            p -= self.lr * p.grad  # in-place SGD update
 
     def zero_grad(self):
         for p in self.params:
-            p.grad.zero_()
+            p.grad = None
 \end{lstlisting}
 \end{block}
 \end{frame}
@@ -174,7 +175,7 @@ class SGD(Optimizer):
 \end{block}
 \begin{itemize}
     \pause
-    \item $v_t$ is an exponentially weighted moving average of past gradients,
+    \item $v_t$ is an exponentially decaying sum of past gradients,
     decayed by $\mu \in [0,1)$ (typically $0.9$).
     \pause
     \item In a ravine, gradient directions across the ravine \emph{cancel}
@@ -279,8 +280,8 @@ class SGD(Optimizer):
     \draw[->] (0,0) -- (8,0) node[right, font=\small] {step};
     \draw[->] (0,0) -- (0,2.5) node[above, font=\small] {LR};
     \draw[thick, blue] (0,0) -- (1.5,2) -- plot[smooth, domain=1.5:7.5] ({\x}, {2*cos((\x-1.5)*15)});
-    \node[font=\small] at (0.75, 2.2) {warmup};
-    \node[font=\small] at (4.5, 1.4) {cosine decay};
+    \node[font=\small, anchor=west] at (0.9, 0.9) {warmup};
+    \node[font=\small, anchor=west] at (4.9, 1.55) {cosine decay};
 \end{tikzpicture}
 \end{center}
 \begin{itemize}
@@ -337,7 +338,7 @@ optimizer = torch.optim.AdamW([
 
 \begin{frame}[plain]
     \centering
-    \includegraphics[width=\paperwidth]{img/parallelism.png}
+    \makebox[\textwidth][c]{\includegraphics[width=\paperwidth]{img/parallelism.png}}
     \end{frame}
 % % ------------------------------------------------------------
 % \begin{frame}
@@ -413,7 +414,7 @@ optimizer = torch.optim.AdamW([
 \begin{itemize}
     \item \textbf{Optimizer}: the rule for turning $\nabla \mathcal{L}$ into a parameter update.
     \item \textbf{Learning rate} $\alpha$: step size. The most important dial.
-    \item \textbf{Momentum} ($\mu$): exponentially weighted average of past gradients.
+    \item \textbf{Momentum} ($\mu$): exponentially decaying sum of past gradients.
     \item \textbf{Weight decay} ($\lambda$): shrink parameters toward zero each step.
     \item \textbf{Adam}: momentum + per-parameter adaptive LR + bias correction.
     \item \textbf{AdamW}: Adam with decoupled weight decay. Use by default.
