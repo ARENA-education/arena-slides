@@ -1,0 +1,22 @@
+# TeX Live packages installed in CI (via TeX-Live/setup-texlive-action, cached).
+# Derived from the files the decks actually load (latexmk -recorder + tlpdb).
+# If a new deck fails in CI with "File `foo.sty' not found", add the package
+# that ships foo.sty here (`tlmgr search --global --file foo.sty`).
+scheme-basic
+latexmk
+
+# beamer + theme deps
+beamer translator sansmathaccent
+
+# fonts
+cm-super ec amsfonts stmaryrd
+
+# maths
+amsmath amscls cancel diffcoeff mleftright
+
+# graphics / tikz
+pgf pgfplots xcolor graphics graphics-cfg graphics-def epstopdf-pkg
+
+# misc LaTeX packages
+algorithmicx background everypage caption etoolbox geometry hyperref
+koma-script listings tools ulem url xkeyval l3packages

@@ -93,31 +93,26 @@ jobs:
       # reads \HANDOUT; latexmk's -usepretex injects that def before main.tex
       # runs, overriding whatever the deck file says.
 
-      - name: Build presentation mode (\pause reveals on)
-        uses: xu-cheng/latex-action@v3
+      # Minimal TeX Live, cached across runs (keyed on the package list).
+      # Much faster than pulling the multi-GB texlive-full Docker image that
+      # xu-cheng/latex-action uses, which dominated build time.
+      - uses: TeX-Live/setup-texlive-action@v4
         with:
-          working_directory: ${{ matrix.deck }}
-          root_file: main.tex
-          args: '-pdf -file-line-error -halt-on-error -interaction=nonstopmode -usepretex=\def\HANDOUT{0}'
-
+          package-file: .github/texlive-packages.txt
+      - name: Build presentation mode (\pause reveals on)
+        working-directory: ${{ matrix.deck }}
+        run: latexmk -pdf -file-line-error -halt-on-error -interaction=nonstopmode '-usepretex=\def\HANDOUT{0}' main.tex
       - name: Stash presentation PDF
         run: mv "${{ matrix.deck }}/main.pdf" "${{ matrix.deck }}/${{ matrix.slug }}-present.pdf"
-
       - name: Clean intermediate build files
         run: |
           cd "${{ matrix.deck }}"
           rm -f main.aux main.log main.nav main.out main.snm main.toc main.vrb main.fls main.fdb_latexmk
-
       - name: Build handout mode (\pause reveals collapsed)
-        uses: xu-cheng/latex-action@v3
-        with:
-          working_directory: ${{ matrix.deck }}
-          root_file: main.tex
-          args: '-pdf -file-line-error -halt-on-error -interaction=nonstopmode -usepretex=\def\HANDOUT{1}'
-
+        working-directory: ${{ matrix.deck }}
+        run: latexmk -pdf -file-line-error -halt-on-error -interaction=nonstopmode '-usepretex=\def\HANDOUT{1}' main.tex
       - name: Rename handout PDF
         run: mv "${{ matrix.deck }}/main.pdf" "${{ matrix.deck }}/${{ matrix.slug }}.pdf"
-
       - name: Upload PDF artifacts
         uses: actions/upload-artifact@v4
         with:
