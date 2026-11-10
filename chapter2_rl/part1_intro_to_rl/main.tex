@@ -435,6 +435,15 @@ Assuming policy $\pi : S \to A$ is deterministic
 \pause
 Only need to sum over all states to find equation for $V_\pi(s)$ 
 in terms of the value of all states $\{V_\pi(s')\}_{s' \in \S}$. 
+\pause
+
+If the environment is also deterministic, $T : \S \times \A \to \S$
+\begin{block}{Bellman Equation (deterministic policy and environment)}
+	$$
+	V_\pi(s) = R(s,a,s') + \gamma V_\pi(s')
+	$$
+	where $a = \pi(s)$ and $s' = T(s,a)$.
+\end{block}
 \end{frame}
 
 
